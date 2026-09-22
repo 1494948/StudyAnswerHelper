@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# electron-builder 的打包输出（发布用的成品在 release/）
+dist-installer*/
+
+# 自检 / 调试日志
+_*.log
+_*.txt
+*.log
+
+# 系统
+Thumbs.db
+.DS_Store
+desktop.ini

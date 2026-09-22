@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+<title>学习通答题助手</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">答</span>
+      <span class="brand-name">学习通答题助手</span>
+      <span class="brand-sub" id="versionText"></span>
+    </div>
+    <div class="topbar-actions">
+      <select id="themeSel" class="ghost-select" title="界面主题">
+        <option value="system">跟随系统</option>
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select>
+      <button class="ghost-btn" id="hideBtn" title="收起到系统托盘">收起</button>
+    </div>
+  </header>
+
+  <div class="body">
+
+    <section class="composer">
+      <div class="fgbar" id="fgBar">
+        <span class="dot" id="fgDot"></span>
+        <span class="fg-label">当前窗口</span>
+        <span class="fg-title" id="fgTitle">正在读取…</span>
+        <span class="tag" id="fgProc"></span>
+        <button class="mini" id="addMatchBtn" hidden>加入识别名单</button>
+      </div>
+
+      <div class="editor-wrap">
+        <textarea id="answerBox" spellcheck="false" autocomplete="off"
+          placeholder="把答案写在这里（可直接 Ctrl+V 粘贴）。写好后按 Ctrl+Alt+Enter，就会自动逐字输入到学习通答题框。"></textarea>
+        <div class="countdown" id="countdown" hidden>
+          <span class="cd-num" id="cdNum">3</span>
+          <span class="cd-text">秒后自动输入到学习通…</span>
+          <button class="mini danger" id="cdCancel">取消（Esc）</button>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <span class="muted" id="charCount">0 字</span>
+        <span class="muted" id="queueHint"></span>
+        <span class="spacer"></span>
+        <label class="field"><span>清理</span><select id="cleanupSel"></select></label>
+        <label class="field"><span>速度</span><select id="delaySel"></select></label>
+        <button class="mini" id="cleanBtn">立即清理</button>
+        <button class="mini" id="pasteBtn">读剪贴板</button>
+        <button class="mini" id="clearBtn">清空</button>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="insertBtn">
+          <span>输入到学习通</span><kbd id="kbdMain">Ctrl+Alt+Enter</kbd>
+        </button>
+        <button class="ghost" id="nextBtn">
+          <span>下一条</span><kbd id="kbdNext">Ctrl+Alt+↓</kbd>
+        </button>
+      </div>
+
+      <div class="autorow">
+        <label class="switch" id="autoSwitch">
+          <input type="checkbox" id="autoChk">
+          <span class="track"><span class="knob"></span></span>
+        </label>
+        <div class="autorow-text">
+          <strong>自动模式</strong>
+          <span class="muted" id="autoHint">切到学习通窗口后自动倒计时输入（Esc 可取消）</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div class="tabs">
+        <button class="tab active" data-tab="queue">答案队列</button>
+        <button class="tab" data-tab="history">历史</button>
+        <button class="tab" data-tab="settings">设置</button>
+      </div>
+
+      <div class="panes">
+        <div class="pane" data-pane="queue">
+          <div class="pane-head">
+            <label class="switch small" id="queueModeSwitch">
+              <input type="checkbox" id="queueModeChk">
+              <span class="track"><span class="knob"></span></span>
+            </label>
+            <span>顺序输入</span>
+            <span class="spacer"></span>
+            <button class="mini" id="queueAddBtn">大框内容存为一条</button>
+          </div>
+          <div class="list" id="queueList"></div>
+          <div class="pane-foot">
+            <button class="mini" id="queueClearBtn">清空队列</button>
+            <span class="muted" id="queueCount"></span>
+          </div>
+        </div>
+
+        <div class="pane" data-pane="history" hidden>
+          <div class="pane-head">
+            <span>最近输入过的内容</span>
+            <span class="spacer"></span>
+            <span class="muted" id="historyCount"></span>
+            <button class="mini" id="historyClearBtn">清空</button>
+          </div>
+          <div class="hint">每次成功输入的内容都会自动记录在这里，方便对答案、复用和排查问题。最多保留 40 条。</div>
+          <div class="list" id="historyList"></div>
+        </div>
+
+        <div class="pane" data-pane="settings" hidden>
+          <div class="setgroup">
+            <div class="setgroup-title">触发与输入</div>
+            <label class="row"><span>主热键</span><select id="hotkeyMainSel"></select></label>
+            <label class="row"><span>下一条热键</span><select id="hotkeyNextSel"></select></label>
+            <label class="row"><span>自动模式倒计时</span><select id="countdownSel"></select></label>
+            <label class="row"><span>逐字写入间隔</span><select id="delaySel2"></select></label>
+            <label class="row switchrow" id="clearFirstRow">
+              <span>输入前先清空输入框内容</span>
+              <span class="switch small"><input type="checkbox" id="clearFirstChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row switchrow" id="refocusRow">
+              <span>输入前自动切回学习通窗口</span>
+              <span class="switch small"><input type="checkbox" id="refocusChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row switchrow" id="beepRow">
+              <span>完成时提示音</span>
+              <span class="switch small"><input type="checkbox" id="beepChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">
+              <span>窗口识别名单</span>
+              <button class="mini" id="addMatchBtn2">把当前窗口加进来</button>
+            </div>
+            <div class="hint">只要窗口标题或进程名里包含下面的任意一个关键词，就认为"当前在学习通"。</div>
+            <label class="col">
+              <span class="muted">标题关键词（逗号分隔）</span>
+              <input type="text" id="matchTitlesInp" spellcheck="false">
+            </label>
+            <label class="col">
+              <span class="muted">进程名关键词（逗号分隔）</span>
+              <input type="text" id="matchProcsInp" spellcheck="false">
+            </label>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">运行方式</div>
+            <label class="row switchrow" id="trayRow">
+              <span>关闭窗口时收起到托盘</span>
+              <span class="switch small"><input type="checkbox" id="trayChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row switchrow" id="autoLaunchRow">
+              <span>开机自动启动</span>
+              <span class="switch small"><input type="checkbox" id="autoLaunchChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">输入引擎</div>
+            <div class="engine-line">
+              <span class="dot" id="engineDot"></span>
+              <span id="engineText">检测中…</span>
+            </div>
+            <div class="row-ops">
+              <button class="mini" id="restartEngineBtn">重启输入引擎</button>
+              <button class="mini" id="openDataBtn">打开数据文件夹</button>
+            </div>
+            <div class="hint mono" id="dataText"></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="statusbar">
+    <span id="statusEngine">输入引擎：检测中</span>
+    <span class="sep">·</span>
+    <span id="statusFg">前台窗口：未知</span>
+    <span class="sep">·</span>
+    <span id="statusHotkey"></span>
+  </footer>
+
+  <div class="toasts" id="toasts"></div>
+</div>
+<script src="js/app.js"></script>
+</body>
+</html>

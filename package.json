@@ -1,0 +1,69 @@
+{
+  "name": "study-answer-helper",
+  "productName": "学习通答题助手",
+  "version": "1.0.0",
+  "description": "A large input box plus global hotkey / auto-trigger tool that types your answers into Xuexitong (Chaoxing) character by character.",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": "Xu",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "start:safe": "electron . --no-sandbox --disable-gpu --disable-software-rasterizer",
+    "icons": "node tools/make-icons.js",
+    "build": "electron-builder --win",
+    "build:dir": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "32.3.3",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "koffi": "^3.3.1"
+  },
+  "build": {
+    "appId": "com.xu.studyanswerhelper",
+    "productName": "学习通答题助手",
+    "copyright": "Copyright © 2026 Xu",
+    "directories": {
+      "output": "dist-installer-v1",
+      "buildResources": "assets"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "tools/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "src/main/engine/**",
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**",
+      "assets/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "学习通答题助手",
+      "installerLanguages": ["zh_CN"],
+      "language": "2052",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "StudyAnswerHelper-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "StudyAnswerHelper-Portable-${version}.${ext}"
+    }
+  }
+}
