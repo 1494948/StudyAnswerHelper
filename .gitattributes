@@ -1,0 +1,20 @@
+# 统一行尾：仓库里一律存 LF，检出时按下面规则处理
+* text=auto eol=lf
+
+# 明确的文本文件
+*.js    text eol=lf
+*.cjs   text eol=lf
+*.json  text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.txt   text eol=lf
+
+# 二进制文件：不要做任何行尾转换，也不要尝试 diff
+*.png   binary
+*.ico   binary
+*.exe   binary
+*.node  binary
+*.dll   binary
+*.lib   binary

@@ -204,9 +204,12 @@ README 里的下载链接用的是相对路径 `../../releases`，所以走 Rele
 
 **方式二：exe 也一起提交（简单，但仓库会变重）**
 
+默认 `.gitignore` 里已经忽略了 `release/`，所以要先把它那一行删掉，exe 才会被纳入：
+
 ```bash
+# 先删掉 .gitignore 里 "release/" 这一行
 git init
-git add .            # release/ 不在 .gitignore 里，会被一起提交
+git add .            # 删掉那行之后，exe 才会被一起提交
 git commit -m "学习通答题助手 v1.0.0（含 exe）"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git

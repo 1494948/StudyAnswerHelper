@@ -1,8 +1,11 @@
 # 依赖
 node_modules/
 
-# electron-builder 的打包输出（发布用的成品在 release/）
+# electron-builder 的打包输出
 dist-installer*/
+
+# 发布用的 exe（每个约 76 MB，走 GitHub Releases 附件发布，不进仓库）
+release/
 
 # 自检 / 调试日志
 _*.log
