@@ -141,3 +141,4 @@ v1.0.0 的验证结果：`SP_SELFTEST` 20 项通过 / 0 失败 / 0 个渲染层 
 | 2026-09-22 | 项目从 `2026-09-21-23-21-04\StudyAnswerHelper\` 迁移到 `projects\StudyAnswerHelper\` | 纳入 AI Document 目录规范。迁移后逐字节校验一致（8186 文件 / 955,452,999 B），`git status` 干净，HEAD 仍为 `3348149`，远端配置未变。未改动任何源码 |
 | 2026-09-22 | 建立本文件 PROJECT.md | 补齐 AI 工作卡，记录本机环境坑 |
 | 2026-09-22 | 分发包归档至 `releases\StudyAnswerHelper\v1.0.0\` | 安装包 + 便携版 + 使用说明 + 发布说明 |
+| 2026-09-23 | 删除项目内重复的 4 个 exe（`release\` 与 `dist-installer-v3\`） | 执行规范「分发包只保留 `releases/` 一份」。删除前已逐一比对 MD5，三处副本完全一致；保留的 `releases\StudyAnswerHelper\v1.0.0\` 归档完整（exe ×2 + 说明 ×2）。释放 301.0 MB，工作台 804.8 MB → 503.7 MB。两处 `发布说明-复制到GitHub.txt` MD5 相同，未丢失唯一内容 |
