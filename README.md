@@ -1,15 +1,19 @@
 # 学习通答题助手 · StudyAnswerHelper
 
-> 题目进去，答案出来。搜到之后，答案自己一个字一个字"打"进学习通答题框。
+> 题目是照片？框一下，它认题、搜答案，5 秒后自己切到学习通把答案打进去。
 >
-> Paste a question, get an answer — then the answer types itself into the Xuexitong (Chaoxing) answer field, character by character.
+> Photo of a question? Box it — it reads the question, finds the answer, then switches to Xuexitong (Chaoxing) and types the answer in, character by character.
 
 **[中文说明](#中文说明) ｜ [English](#english)**
 
 ![搜答案](preview/main-search.png)
 
 <details open>
-<summary><b>其他界面截图（点开看：答案队列 / 题库管理 / 历史 / 设置 / 深色主题）</b></summary>
+<summary><b>其他界面截图（点开看：识别后自动输入 / 答案队列 / 题库管理 / 历史 / 设置 / 深色主题）</b></summary>
+
+**识别后自动输入** —— 搜到答案后弹 5 秒倒计时，把将要输入的答案原文先摊给你看，Esc 可取消
+
+![自动输入](preview/main-autoinput.png)
 
 **答案队列** —— 大框写答案，按一个热键逐字输入，不碰剪贴板
 
@@ -23,7 +27,7 @@
 
 ![历史记录](preview/main-history.png)
 
-**设置** —— 热键、自动模式倒计时、逐字速度、搜答案、AI 接口、窗口识别名单
+**设置** —— 热键、自动模式倒计时、逐字速度、搜答案、图片识别、自动流程、窗口识别名单
 
 ![设置](preview/main-settings.png)
 
@@ -51,7 +55,7 @@
 - 要按自己的屏幕分辨率手改 `params.txt`
 - 分辨率或界面样式一变就失效，得重新截图调参
 
-本项目**不做屏幕识别**，改为两条更稳的路径：
+本项目**不靠屏幕识别来定位界面**（不做模板匹配、不模拟点击找按钮），改用两条更稳的路径：
 
 | | 参考项目 | 本项目 |
 |---|---|---|
@@ -61,10 +65,16 @@
 | 输入中文 / 数学符号 | 靠剪贴板或 `pyautogui` 打字 | `SendInput` + `KEYEVENTF_UNICODE`，√ ≈ π ∫ 等直接送进输入框 |
 | 界面 | 改配置文件 | 图形界面，点几下就能用 |
 
+> 补充一句免得误会：**v1.2.0 确实用了屏幕截图，但用途只是"把题目照片读成文字"**。
+> 它截的是你亲手框住的那一块，交给识别模型，用完即删。
+> 界面元素仍然全靠窗口标题 / 进程名判断，不靠图像匹配 —— 所以换分辨率依然不会失效。
+
 ### 功能
 
 - **大输入框**：整个左半屏都是输入区，可以直接 `Ctrl+V` 粘贴整段答案，自动保存草稿（关掉程序也不丢）
+- **图片识别题目（v1.2.0 新增）**：`Ctrl + Alt + X` 在屏幕上框住题目照片，自动识别出题干 —— 见下节
 - **搜答案（v1.1.0 新增）**：贴一道题进去，三路答案来源同时开工 —— 见下节
+- **识别后自动输入（v1.2.0 新增）**：搜到高可信答案后弹 5 秒倒计时，自动切到学习通把答案打进去（秒数可调，整组可关）
 - **全局热键触发**：默认 `Ctrl + Alt + Enter`，在**任何**窗口下都生效，不需要先点回本程序
 - **自动模式**：打开开关后，只要切到学习通窗口，倒计时 3 秒就自动输入（按 `Esc` 随时取消）
 - **答案队列 + 顺序输入**：把多道题的答案预存成队列，每按一次 `Ctrl + Alt + ↓` 自动装下一条，适合连着一大批题往下录
@@ -75,6 +85,33 @@
 - **窗口识别名单可配置**：默认认「学习通 / 超星 / chaoxing / xuexitong」，如果学校用的是别的客户端，点一下"加入识别名单"把当前窗口加进去就行
 - **托盘常驻**：关闭窗口不退出，缩在系统托盘里随时待命；双击托盘图标回来
 - **浅色 / 深色主题**，跟随系统
+
+### 图片识别：题目是照片也能做（v1.2.0 新增）
+
+学习通上很多题目是老师拍的照片、扫描件或截图，选不中、复制不了。这一版把这条链路补齐了：
+
+**按 `Ctrl + Alt + X` → 屏幕变暗 → 拖框圈住题目 → 松手**，剩下的它来做。
+
+也可以不记热键：切到右边「搜答案」标签页，点那个蓝色的「截图选题」按钮。
+
+识别有两路：
+
+| 引擎 | 怎么工作 | 需要什么 | 准确率 |
+|---|---|---|---|
+| **AI 视觉**（默认，推荐） | 把框选的那块图交给视觉模型（默认智谱 `glm-4v-flash`，备选 `deepseek-v4-flash`），它能认公式、上标、根号、分数和 A/B/C/D 选项 | 一个 API Key（智谱 glm-4v-flash 有免费额度） | 数学题可放心用 |
+| **Windows 自带 OCR** | 调用系统内置的 `Windows.Media.Ocr`，完全离线 | 什么都不需要 | **认不出数学公式**，只作兜底 |
+
+**关于兜底要说得直白一点**：Windows 自带 OCR 实测会把 `a²` 认成 `a2`、`3²` 认成 `32`、
+减号 `−` 认成汉字 `一`，还会整行漏掉 `A.3 B.4` 这样的选项。拿这种文本去搜题基本搜不到。
+所以它只是"有字就行、不挑准确率"时的兜底，用它的结果时界面会挂一条黄色警告提醒你。
+
+**题目框现在默认只读。** 它的内容**只有一个来源：识别结果**，不再支持手动键入 ——
+这样避免"手输的和图上的对不上"。识别错了就点「修正题目」解锁，改完点「保存修正」。
+
+**识别完可以自动输入**：识别出题目 → 自动搜答案 → 搜到高可信答案后右下角弹 **5 秒倒计时**，
+把将要输入的答案原文先摊开给你看一眼，然后自动切到学习通逐字输入。
+倒计时期间按 `Esc` 取消，点「立即输入」立刻动手。秒数可调（3 / 5 / 8 / 12 秒），
+整个自动流程也能一键关掉（设置 → 识别之后的自动流程）。
 
 ### 搜答案：题目进去，答案出来
 
@@ -90,12 +127,15 @@
 
 **怎么用：**
 
-1. 在学习通里选中题目 → `Ctrl+C` 复制
-2. 按 `Ctrl + Alt + F`（搜题热键）—— 助手会自动跳到前台，拿剪贴板里的题目开搜
-3. 结果排在右边：**本地题库 `100%`** 的会自动填进大框；网络线索点「打开网页」看原题解析；AI 的可以「答案+解析」一起填
-4. 回到学习通，按 `Ctrl + Alt + Enter` 输入
+- **题目是文字**：在学习通里选中题目 → `Ctrl+C` 复制 → 按 `Ctrl + Alt + F`（搜题热键）。
+  助手会自动跳到前台，拿剪贴板里的题目开搜。
+- **题目是图片**：按 `Ctrl + Alt + X` 框选题目（见上一节），识别完它会自动接着搜。
 
-不想记热键也行：切到右边「搜答案」标签页，把题目贴进题目框，点「搜答案」。
+搜到后结果排在右边：**本地题库 `100%`** 的会自动填进大框；网络线索点「打开网页」看原题解析；
+AI 的可以「答案+解析」一起填。然后回到学习通，按 `Ctrl + Alt + Enter` 输入 ——
+或者干脆等那个 5 秒倒计时自己动手。
+
+不想记热键也行：切到右边「搜答案」标签页，点「截图选题」或「重新搜答案」。
 
 **几个必须说清楚的点：**
 
@@ -110,8 +150,8 @@
 
 | 文件 | 说明 |
 |---|---|
-| `StudyAnswerHelper-Setup-1.1.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
-| `StudyAnswerHelper-Portable-1.1.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
+| `StudyAnswerHelper-Setup-1.2.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
+| `StudyAnswerHelper-Portable-1.2.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
 
 > **Windows 会弹"已保护你的电脑"（SmartScreen）**
 > 这是正常的：本程序没有购买代码签名证书（一年几百到几千元），Windows 对没有签名的程序一律拦一下。
@@ -119,11 +159,34 @@
 
 ### 快速上手
 
+**题目是照片（最省事）：**
+
+1. 打开程序
+2. 按 `Ctrl + Alt + X`，拖框圈住屏幕上的题目，松手
+3. 它识别题目 → 搜答案 → 右下角弹 5 秒倒计时
+4. 5 秒内切到学习通，**把光标点进答题框** —— 倒计时结束，答案自己一个字一个字输进去
+
+中途不想让它输入，按 `Esc` 取消。
+
+**答案已经在你手上：**
+
 1. 打开程序，把答案写进左边的大框里（或者 `Ctrl+V` 粘贴）
 2. 切到学习通，**把光标点进答题框**
 3. 按 `Ctrl + Alt + Enter` —— 答案会自己一个字一个字输进去
 
-就这三步。之后每次只需要改一改大框里的内容，重复第 2、3 步。
+之后每次只需要改一改大框里的内容，重复第 2、3 步。
+
+### 五个按键
+
+| 按键 | 作用 |
+|---|---|
+| `Ctrl + Alt + X` | **截图选题**：框选题目照片，自动识别（v1.2.0 新增） |
+| `Ctrl + Alt + F` | 按题目重新搜答案（题目来自上次识别结果） |
+| `Ctrl + Alt + Enter` | 把大框里的内容输入到学习通 |
+| `Ctrl + Alt + ↓` | 切到"下一条"（需要先用答案队列存多条） |
+| `Esc` | 取消倒计时 / 关掉弹窗 |
+
+全部可以在「设置」里改。
 
 ### 三种触发方式，按习惯挑一个
 
@@ -161,18 +224,31 @@
 
 1. **看右边的错误提示。** 程序会把每一路来源的失败原因原样显示出来，比如"搜狗：触发了人机验证，已自动改用其他来源"。
 2. **是不是被搜索引擎限流了。** 一分钟内连搜十几道题，搜狗会弹人机验证页。程序会临时跳过它、自动改用 360 / 必应，设置页会显示哪个引擎在冷却（默认冷却 3 分钟）。
-3. **题干有没有带选项。** 程序会自动把 `A. B. C. D.` 剔掉再搜（选项会干扰检索）。如果题目是图片，得先把文字打出来或复制出来。
+3. **题目识别得对不对。** 如果题目是照片，先确认识别结果 ——
+   点「修正题目」把明显错的地方改掉再搜。走 Windows 自带 OCR 时公式基本是错的，
+   换 AI 视觉引擎（设置 → 图片识别）。
 4. **换个写法。** 题干太长时可以只留关键条件部分；搜狗对"完整题干"最敏感。
 5. **配一个 AI 接口**，数学题这一步最稳（见「搜答案」一节的表格）。
 
 **Q：网络检索给的答案是错的 / 不完整？**
 网络检索拿的是**公开网页的线索**，不是权威答案。程序只做了两件事：按相关度排序、从标题摘要里抽可能含答案的片段，抽到的都会打上「疑似请核对」标签。**请务必自己看一眼再输入。** 想要稳定的正确答案，请用「本地题库」（自己录）或「AI 解答」。
 
+**Q：识别出来的题目不对（公式变成数字、少了选项）？**
+说明当前走的是 **Windows 自带 OCR** —— 它认不出数学公式（界面会有黄色警告）。实测它会把 `a²` 认成 `a2`、`3²` 认成 `32`、减号 `−` 认成汉字 `一`，还会整行漏掉选项。
+到「设置 → 图片识别」把引擎改成 **AI 视觉** 并填一个 Key，智谱 `glm-4v-flash` 有免费额度。
+另外框大一点、把题干和选项一起圈进去，识别效果更好。
+
+**Q：识别完 5 秒倒计时过去了，学习通里没输入？**
+倒计时结束前得让光标落在答题框里。程序会尝试自动切窗口点一下，但有些页面需要你手动点一下答题框。也可以点「立即输入」。
+如果连窗口都没切过去，检查「设置 → 自动模式」和「识别之后的自动流程」里的开关。
+不想要这个自动流程，可以在设置里整组关掉。
+
 **Q：搜答案联网吗？会上传我的东西吗？**
 - **只在「网络检索」打勾时联网**，请求内容只有**题干文本**（会先剔除选项和多余空白），发给搜狗 / 360 / 必应。除此之外不发送任何东西 —— 不会上传你的答案、历史、题库。
+- **图片识别用 AI 视觉时会联网**，发出去的**只有你框选的那一块截图**（不是整屏），用完即删临时文件。用 Windows 自带 OCR 则完全不联网。
 - **「本地题库」完全离线**，不产生任何网络请求。
 - **「AI 解答」只在你填了 Key 并打勾时才调用**，请求内容同样是题干文本 + 一段固定提示词。
-- 关掉「网络检索」和「AI 解答」两个勾，程序就是纯离线的。
+- 关掉「网络检索」和「AI 解答」两个勾、识别引擎选 Windows OCR，程序就是纯离线的。
 
 **Q：数据存在哪？**
 - 草稿 / 队列 / 历史 / 设置：`%APPDATA%\学习通答题助手\answer-data.json`
@@ -197,9 +273,27 @@ Electron 主进程 ──IPC──> 渲染进程（界面）
       │                                  ├─ QueryFullProcessImageNameW            读进程名
       │                                  └─ SendInput + KEYEVENTF_UNICODE         逐字输入
       │
-      └── lib/answer-search.js ──┬─ lib/answer-bank.js     本地题库（JSON + 模糊匹配）
-                                 ├─ lib/http.js            零依赖 HTTP（搜狗 / 360 / 必应）
-                                 └─ lib/textsim.js         归一化 / 相似度 / 答案解析
+      ├── lib/answer-search.js ──┬─ lib/answer-bank.js     本地题库（JSON + 模糊匹配）
+      │                          ├─ lib/http.js            零依赖 HTTP（搜狗 / 360 / 必应）
+      │                          └─ lib/textsim.js         归一化 / 相似度 / 答案解析
+      │
+      └── lib/ocr.js ────────────┬─ AI 视觉模型（OpenAI 兼容，主备双模型级联）
+        （v1.2.0）               └─ lib/ocr-win.ps1         WinRT Windows.Media.Ocr（离线兜底）
+```
+
+**图片识别链路（v1.2.0）：**
+
+```
+Ctrl+Alt+X ──> 隐藏主窗口 ──> desktopCapturer 抓整屏
+                              │
+                              └─> 全屏无边框遮罩窗口（独立 BrowserWindow，置顶 screen-saver 层）
+                                    底图按屏幕真实像素 1:1 摆放，供用户拖框
+                                        │
+                                  松手 ─┴─> 主进程按 kx/ky 换算裁剪 → 落临时 PNG
+                                              │
+                                              └─> ocr.js：AI 视觉（主）→ AI 视觉（备）→ 系统 OCR（兜底）
+                                                     │
+                                        识别文本 ────┴─> 填只读题目框 → 自动搜答案 → 5 秒倒计时自动输入
 ```
 
 **搜答案的三个技术要点（都是踩过坑才定下来的）：**
@@ -208,7 +302,13 @@ Electron 主进程 ──IPC──> 渲染进程（界面）
 - **归一化不能删标点。** 普通文本相似度预处理会把标点全去掉，但 `+ - = . / ( ) ² √ π` 在数学题里全是有效信息，删了 `a+b=3` 和 `a-b=3` 会压成同一个串。
 - **网页摘要不能整段比对。** 题干十几个字、摘要三四百字，直接比会被摊薄到 0.2 左右，排名就没法看了。所以对"标题""摘要开头""整段"各算一次取最大值 —— 题库站的标题往往就是题干原文。
 
-**零第三方依赖**：HTTP 客户端基于 Node 内置 `http/https/zlib` 自己写（含重定向跟随、超时、gzip/deflate/br 解压、响应体上限）；HTML 解析用正则 + 实体解码，不引 DOM 库；题库就是一个 JSON 文件。整个项目除 `electron` 和 `koffi` 外没有运行时依赖。
+**零第三方依赖**：HTTP 客户端基于 Node 内置 `http/https/zlib` 自己写（含重定向跟随、超时、gzip/deflate/br 解压、响应体上限）；HTML 解析用正则 + 实体解码，不引 DOM 库；题库就是一个 JSON 文件；图片识别也不用任何 SDK —— 视觉模型直接走 `fetch` 发 base64 图片，系统 OCR 走一段 PowerShell 脚本调 WinRT。整个项目除 `electron` 和 `koffi` 外没有运行时依赖。
+
+**图片识别的三个技术要点：**
+
+- **系统自带 OCR 对数学题不可用，只能当兜底。** 实测 `a²`→`a2`、`3²`→`32`、减号 `−`→汉字 `一`，还整行漏掉选项。所以主路是 AI 视觉模型，系统 OCR 只在没配 Key 或模型调用失败时兜底，并且**用了它就挂一条黄色警告**，不让人误以为"识别成功了"。
+- **PowerShell 5.1 调 WinRT 有两个坑。** 一是 `IAsyncOperation` **不能**用 `.GetAwaiter()`（报"无法对 System.__ComObject 调用方法"），必须用 `AsTask` 反射桥接；二是 `IAsyncOperation\`1` 里的反引号在**双引号字符串**中是转义符会被吃掉，得用单引号。另外 WinRT 的文件 API 不认正斜杠，`$res.Lines` 直接取 `.Count` 会得到空值 —— 这些都在 `ocr-win.ps1` 的注释里标了。
+- **框选坐标最容易悄悄错位。** 无边框窗口默认会被"工作区"限制住（实测高度 1040 而不是屏幕的 1080），一旦底图被 CSS 拉伸，"你框的位置"和"实际截到的内容"就错开了 —— 曾经出现"框住题目却识别出任务栏日期"。修法是底图按屏幕真实像素 **1:1** 摆放、`show()` 之后再 `setBounds()` 强制铺满，并且加了一套像素级自检（`SP_CAPTURETEST`，见下）守住它。
 
 **搜索引擎适配**：搜狗（中文题库命中率最高）→ 360（更抗限流，且结果页直接给出真实 URL，不必解跳转）→ 必应（兜底）。依次尝试，第一个能解析出结果的即采用；撞上人机验证页的引擎会被临时冷却并自动跳过。
 
@@ -235,7 +335,10 @@ npm run start:safe
 # 3. 生成图标（改过 tools/make-icons.js 之后执行）
 npm run icons
 
-# 4. 打包成 exe（产物在 dist-installer-v4/）
+# 4. 生成一张"像照片"的示例题目图，用来离线验证识别链路
+node tools/make-question-image.js
+
+# 5. 打包成 exe（产物在 dist-installer-v5/）
 npm run build
 ```
 
@@ -246,7 +349,15 @@ npm config set registry https://registry.npmmirror.com
 ```
 
 > 重复打包时建议换一个输出目录，免得清理旧目录失败：
-> `npx electron-builder --win --config.directories.output=dist-installer-v5`
+> `npx electron-builder --win --config.directories.output=dist-installer-v6`
+>
+> **如果构建报 `unable to verify the first certificate`**：说明你的网络里有 HTTPS 代理在做
+> TLS 中间人（常见于公司网络）。`curl -k` 能正常下载就说明内容没问题。此时可以：
+> `NODE_TLS_REJECT_UNAUTHORIZED=0 npx electron-builder --win`
+> （只在你信任本机网络的前提下这么做）
+>
+> 另外注意：`--dir` 只生成 `win-unpacked`、**不会**产出安装包；要出 Setup/Portable 必须用
+> `--win`，且首次需要联网下载 winCodeSign（约 2.5 MB）。
 
 ### 上传到你自己的 GitHub 仓库
 
@@ -261,18 +372,18 @@ npm config set registry https://registry.npmmirror.com
 ```bash
 git init
 git add .
-git commit -m "学习通答题助手 v1.1.0：源码"
+git commit -m "学习通答题助手 v1.2.0：源码"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
 
 # 再发布 Release（需要先安装 GitHub CLI：https://cli.github.com/）
-gh release create v1.1.0 \
-  "release/StudyAnswerHelper-Setup-1.1.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.1.0.exe" \
+gh release create v1.2.0 \
+  "release/StudyAnswerHelper-Setup-1.2.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.2.0.exe" \
   "release/使用说明.txt" \
-  --title "学习通答题助手 v1.1.0" \
-  --notes "新增搜答案：本地题库 / 网络检索 / AI 解答"
+  --title "学习通答题助手 v1.2.0" \
+  --notes "新增图片识别题目 + 框选截图 + 识别后 5 秒自动输入"
 ```
 
 README 里的下载链接用的是相对路径 `../../releases`，所以走 Releases 时链接直接就通。
@@ -285,7 +396,7 @@ README 里的下载链接用的是相对路径 `../../releases`，所以走 Rele
 # 先删掉 .gitignore 里 "release/" 这一行
 git init
 git add .            # 删掉那行之后，exe 才会被一起提交
-git commit -m "学习通答题助手 v1.1.0（含 exe）"
+git commit -m "学习通答题助手 v1.2.0（含 exe）"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
@@ -301,14 +412,15 @@ git push -u origin main
 
 ### 自动化自检
 
-这个项目配了四套自动验证，改完代码建议跑一遍：
+这个项目配了五套自动验证，改完代码建议跑一遍：
 
 | 环境变量 | 作用 |
 |---|---|
-| `SP_SELFTEST=1` | **交互级自检**：在真实渲染进程里断言 32 项，包括用 `elementFromPoint` 验证"按钮是不是真的点得到"（程序化 `click()` 会绕过层级遮挡判定，掩盖真实缺陷）、搜答案的离线闭环、题库弹窗、以及一条"API Key 不许出主进程"的安全断言 |
+| `SP_SELFTEST=1` | **交互级自检**：在真实渲染进程里断言 39 项，包括用 `elementFromPoint` 验证"按钮是不是真的点得到"（程序化 `click()` 会绕过层级遮挡判定，掩盖真实缺陷）、搜答案的离线闭环、识别结果渲染与只读态、自动输入浮层、题库弹窗、以及"两把 API Key 都不许出主进程"的安全断言 |
 | `SP_SMOKE=1` | **真实键盘注入**：开一个标题为「学习通」的测试窗口，用真正的 `SendInput` 把 `数学答案：√3 + 1/2 ≈ 1.366` 打进去，再读回来逐字比对 |
-| `SP_SHOT=1` | **界面截图走查**：把五个页面 × 两套主题截成 PNG 放到 `preview/`（用现造的演示数据，不会截进真实答案） |
+| `SP_SHOT=1` | **界面截图走查**：把六个页面 × 两套主题截成 PNG 放到 `preview/`（用现造的演示数据，不会截进真实答案） |
 | `SP_SEARCHTEST=1` | **真实检索链路**：联网实跑一次三源检索，把候选与错误原样写进日志。**故意和自检分开** —— 自检必须离线可复现，而这条链路依赖外部搜索引擎 |
+| `SP_CAPTURETEST=1` | **真实识别链路**：真开一次全屏框选遮罩，走完"截图 → 裁剪 → 识别 → 落盘"。加 `SP_CAPTURE_KEEP=x.png` 会把遮罩画面和裁剪结果各存一份，方便人工核对 |
 
 v1.1.0 打包产物的实测结果（开发态与打包后的 exe 各跑一遍，结果一致）：
 
@@ -318,6 +430,22 @@ SP_SMOKE       5 项通过 / 0 项失败
               窗口识别命中 → 键盘注入完全一致（21 字 / 451 ms）
 SP_SEARCHTEST 本地题库命中 1.000 并自动填入大框；搜狗返回 9 条线索，头名相关度 0.905
 ```
+
+v1.2.0 的实测结果（开发态、打包版 `win-unpacked` 与便携版三处各跑一遍）：
+
+```
+SP_SELFTEST     39 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+SP_SMOKE         5 项通过 / 0 项失败，键盘注入 21 字逐字一致（450~459 ms）
+SP_SHOT          6 个页面 × 2 套主题
+SP_CAPTURETEST   遮罩窗口 1920×1080 == 屏幕；底图 1:1 未被拉伸；
+                 裁剪尺寸 960×324 == 选区换算值；
+                 裁剪内容与选区内容 16×16 逐字节完全一致（差值位置 = -1）；
+                 识别文本成功落盘；遮罩关闭、主窗口恢复
+```
+
+> `SP_CAPTURETEST` 里那条像素比对是**故意在"关掉放大"的前提下**做的：
+> 开启放大时用的是高质量插值，放大图每个像素都是邻域混合值，逐字节比必然差几个色阶。
+> 关掉放大再比，才是"框哪裁哪"的硬证明 —— 改截图相关代码后务必重跑它。
 
 ```bash
 # Windows / PowerShell
@@ -329,14 +457,18 @@ $env:SP_SMOKE = "1"
 
 ### 数据与隐私
 
-- **默认完全离线**。程序只在「搜索答案 → 网络检索 / AI 解答」打勾时才联网，且只把**题干文本**发出去。
+- **默认完全离线**。程序只在「搜索答案 → 网络检索 / AI 解答」打勾、或识别引擎选了 AI 视觉时才联网。
+- 联网时发出去的内容只有两样：
+  - 搜题：**题干文本**（会先剔除 `A. B. C. D.` 选项和多余空白）→ 搜狗 / 360 / 必应
+  - 图片识别：**你框选的那一块截图**（不是整屏）→ 你配置的视觉模型接口
 - 你的答案、题库、历史只存在本机：
   - `%APPDATA%\学习通答题助手\answer-data.json`（草稿 / 队列 / 历史 / 设置）
   - `%APPDATA%\学习通答题助手\answer-bank.json`（本地题库）
 - 没有埋点、没有账号体系、不做任何遥测。
-- 程序不读取剪贴板之外的内容，只读取前台窗口的**标题和进程名**用于判断"是不是学习通"，不读取窗口内容、不截屏、不记录按键。
+- **截图只在你主动按 `Ctrl + Alt + X`（或点「截图选题」）时发生**，只截这一张，识别完即删临时文件。平时不读屏幕内容、不截屏、不记录按键。
+- 只读取前台窗口的**标题和进程名**用于判断"是不是学习通"，不读取窗口内容。
 - 剪贴板**只在两个地方被读取**：你主动点「读剪贴板」按钮，或按搜题热键。其余时间一律不碰。
-- AI 的 API Key 以明文存在 `answer-data.json` 里，且**只在主进程内使用**（自检里有专门断言：状态推送到界面前必须脱敏）。共享电脑或导出发送数据文件夹前请留意，不想留就点「清除密钥」。
+- API Key（AI 解答的、图片识别的）以明文存在 `answer-data.json` 里，且**只在主进程内使用**（自检里有专门断言：状态推送到界面前必须脱敏，两把 Key 都不许外泄）。共享电脑或导出发送数据文件夹前请留意，不想留就点「清除密钥」。
 
 ### 免责声明
 
@@ -370,7 +502,7 @@ The reference project [Z-MiCTrue/Auto_Stuendt](https://github.com/Z-MiCTrue/Auto
 - You must hand-edit `params.txt` for your own screen resolution
 - Change the resolution or a UI style and it breaks until you re-tune everything
 
-This project does **no screen recognition**. It takes two sturdier routes instead:
+This project **does not use screen recognition to locate UI elements** (no template matching, no synthetic clicking to find buttons). It takes two sturdier routes instead:
 
 | | Reference project | This project |
 |---|---|---|
@@ -380,10 +512,16 @@ This project does **no screen recognition**. It takes two sturdier routes instea
 | CJK / math symbols | Clipboard or `pyautogui` typing | `SendInput` + `KEYEVENTF_UNICODE` — `√ ≈ π ∫` go straight into the field |
 | Interface | Edit a config file | GUI, a few clicks |
 
+> To avoid a misunderstanding: **v1.2.0 does use screen capture, but only to read a question photo into text.**
+> It captures just the region you draw by hand, hands it to an OCR model, and deletes it. UI elements are still
+> located purely by window title / process name, so changing resolution still cannot break it.
+
 ### Features
 
 - **Large input box** — half the window is the input area. Paste a whole answer with `Ctrl+V`; the draft is auto-saved and survives a restart.
-- **Answer search (new in v1.1.0)** — paste a question, and three answer sources fire at once. See the next section.
+- **Photo questions (new in v1.2.0)** — press `Ctrl + Alt + X` and drag a box around a question on screen; it reads the question text. See the next section.
+- **Answer search (new in v1.1.0)** — paste a question, and three answer sources fire at once. See below.
+- **Auto-enter after recognition (new in v1.2.0)** — once a high-confidence answer is found, a 5-second countdown starts and it switches to Xuexitong and types it (interval configurable, whole flow can be turned off).
 - **Global hotkey** — default `Ctrl + Alt + Enter`, works from **any** window, no need to click back into this app first.
 - **Auto mode** — flip the switch and simply switching to the Xuexitong window starts a 3-second countdown and then types. Press `Esc` to cancel.
 - **Answer queue with sequential entry** — pre-store answers for many questions; each press of `Ctrl + Alt + ↓` loads the next one. Built for working through a long list.
@@ -394,6 +532,33 @@ This project does **no screen recognition**. It takes two sturdier routes instea
 - **Configurable window matching** — defaults to `学习通 / 超星 / chaoxing / xuexitong`. Using a different client? Switch to its window and click "Add current window to match list".
 - **Lives in the tray** — closing the window keeps the app running in the system tray; double-click the tray icon to bring it back.
 - **Light / dark theme**, following the system setting.
+
+### Photo questions: box it, read it (new in v1.2.0)
+
+Many questions on Xuexitong are photos, scans or screenshots — you cannot select or copy them. This version closes that gap:
+
+**Press `Ctrl + Alt + X` → the screen dims → drag a box around the question → release.** The rest is automatic.
+
+(No hotkey needed either: open the "搜答案" tab and click the blue "截图选题" button.)
+
+Two engines:
+
+| Engine | How it works | Requirements | Accuracy |
+|---|---|---|---|
+| **AI vision** (default, recommended) | Sends the region you boxed to a vision model (default Zhipu `glm-4v-flash`, fallback `deepseek-v4-flash`). Handles formulas, superscripts, radicals, fractions and A/B/C/D options | One API key (Zhipu's `glm-4v-flash` has a free tier) | Good enough for maths |
+| **Windows built-in OCR** | Calls `Windows.Media.Ocr`. Fully offline | Nothing | **Cannot read maths notation** — fallback only |
+
+**Straight talk about the fallback**: Windows built-in OCR turned `a²` into `a2`, `3²` into `32`, the minus sign `−`
+into the Chinese character `一`, and dropped the whole `A.3 B.4` line in testing. Searching with that text finds nothing.
+So it is only for "any text will do" situations, and the UI shows a yellow warning whenever it is used.
+
+**The question box is now read-only by default.** Its content has exactly one source — the recognition result —
+so manual typing is gone. That prevents "what you typed" from drifting away from "what the photo said".
+If it got something wrong, click "修正题目" to unlock, edit, then "保存修正".
+
+**Recognition can feed straight into auto-entry**: recognise → search → once a high-confidence answer is found a
+**5-second countdown** appears in the corner, showing the exact answer text it is about to type. Press `Esc` to cancel,
+or click "立即输入" to go now. The interval is configurable (3 / 5 / 8 / 12 s) and the whole flow can be switched off.
 
 ### Answer search: question in, answer out
 
@@ -409,12 +574,12 @@ Three sources run concurrently; results are merged and ranked together (each can
 
 **How to use it:**
 
-1. Select the question in Xuexitong → `Ctrl+C`
-2. Press `Ctrl + Alt + F` (the search hotkey) — the helper comes to the front and searches the clipboard
-3. Results appear on the right: a `100%` local-bank hit fills the box automatically; web leads have an "Open page" button; AI results can be inserted as "answer + working"
-4. Switch back to Xuexitong and press `Ctrl + Alt + Enter`
+- **Text question**: select it in Xuexitong → `Ctrl+C` → press `Ctrl + Alt + F`. The helper comes to the front and searches the clipboard.
+- **Photo question**: press `Ctrl + Alt + X` and box it (see the section above); searching continues automatically.
 
-You can also skip the hotkey: open the "搜答案" tab, paste the question, click "搜答案".
+Results appear on the right: a `100%` local-bank hit fills the box automatically; web leads have an "Open page" button;
+AI results can be inserted as "answer + working". Then either switch back to Xuexitong and press `Ctrl + Alt + Enter`,
+or just let the 5-second countdown do it for you.
 
 **Things you should know:**
 
@@ -429,18 +594,41 @@ Grab one of the two files from this repository's [Releases](../../releases) page
 
 | File | Description |
 |---|---|
-| `StudyAnswerHelper-Setup-1.1.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
-| `StudyAnswerHelper-Portable-1.1.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
+| `StudyAnswerHelper-Setup-1.2.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
+| `StudyAnswerHelper-Portable-1.2.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
 
 > **Windows SmartScreen will warn you.** This is expected: the app is not code-signed (a certificate costs hundreds to thousands per year), and Windows blocks unsigned binaries by default. Click "More info" → "Run anyway". The full source is in this repository — audit it, or build it yourself.
 
 ### Quick start
 
+**The question is a photo (easiest):**
+
+1. Open the app.
+2. Press `Ctrl + Alt + X` and drag a box around the question on screen. Release.
+3. It reads the question → searches → a 5-second countdown appears.
+4. Switch to Xuexitong and **click the caret into the answer field** — when the countdown ends the answer types itself in.
+
+Press `Esc` at any point to cancel.
+
+**You already have the answer:**
+
 1. Open the app and write your answer into the large box on the left (or paste with `Ctrl+V`).
 2. Switch to Xuexitong and **click the caret into the answer field**.
 3. Press `Ctrl + Alt + Enter` — the answer types itself in, character by character.
 
-That's it. Afterwards just edit the box and repeat steps 2–3.
+Afterwards just edit the box and repeat steps 2–3.
+
+### Five keys
+
+| Key | Action |
+|---|---|
+| `Ctrl + Alt + X` | **Box a question photo** on screen and recognise it (new in v1.2.0) |
+| `Ctrl + Alt + F` | Search again using the current question |
+| `Ctrl + Alt + Enter` | Type the contents of the big box into Xuexitong |
+| `Ctrl + Alt + ↓` | Load the "next" queued answer |
+| `Esc` | Cancel the countdown / close a dialog |
+
+All rebindable in Settings.
 
 ### Three ways to trigger it
 
@@ -474,18 +662,27 @@ Work through these in order:
 
 1. **Read the error messages on the right.** Every source reports its own failure verbatim, e.g. "搜狗：触发了人机验证（短时间内检索太频繁），已自动改用其他来源".
 2. **You may be rate-limited.** A dozen searches in a minute gets you a CAPTCHA from Sogou. The app temporarily skips it and falls back to 360 / Bing; the Settings page shows which engine is cooling down (3 minutes by default).
-3. **Did the question include its options?** The app strips `A. B. C. D.` before searching (options hurt retrieval). If the question is an image, you need to get the text out first.
+3. **Was the question recognised correctly?** For a photo question, check the recognised text first — click "修正题目", fix the obvious errors, then search again. On Windows built-in OCR the maths is essentially always wrong, so switch to the AI vision engine (Settings → 图片识别).
 4. **Rephrase.** For a very long question, keep only the key conditions; Sogou is most sensitive to the full text.
 5. **Configure an AI endpoint** — the most reliable route for maths (see the table above).
 
 **The answer from web search is wrong or incomplete.**
 Web search returns **leads from public pages**, not authoritative answers. The app only ranks them by relevance and extracts candidate snippets, and every extracted answer is tagged "疑似请核对". **Always eyeball it before inserting.** For dependable answers use the local bank (your own entries) or the AI source.
 
+**The recognised question is wrong (formulas turned into digits, options missing).**
+That means the **Windows built-in OCR** engine is in use — it cannot read maths notation (the UI shows a yellow warning). In testing it turned `a²` into `a2`, `3²` into `32`, the minus sign `−` into the Chinese character `一`, and dropped whole option lines.
+Go to Settings → 图片识别, switch the engine to **AI vision** and enter a key (Zhipu `glm-4v-flash` has a free tier). Drawing a bigger box that includes the options also helps.
+
+**The 5-second countdown finished but nothing was typed.**
+The caret must be in the answer field when the countdown ends. The app tries to switch windows and click for you, but some pages need a manual click into the field. You can also click "立即输入". If the window never switched at all, check Settings → 自动模式 and 识别之后的自动流程. The whole flow can be switched off there.
+
 **Does answer search send anything out?**
-- It only goes online when **Web search** or **AI answer** is ticked, and the only thing sent is the **question text** (options and redundant whitespace stripped) — to Sogou / 360 / Bing.
+- It only goes online when **Web search** or **AI answer** is ticked, or when the OCR engine is set to **AI vision**.
+- What is sent: the **question text** (options and redundant whitespace stripped) → Sogou / 360 / Bing; and for photo questions, **only the region you boxed** (never the full screen) → the vision endpoint you configured.
 - It never uploads your answers, history, or bank.
 - The **local bank is fully offline** and makes no network requests at all.
-- Untick both boxes and the app is entirely offline.
+- Untick both boxes and set OCR to Windows built-in, and the app is entirely offline.
+- **Screen capture happens only when you press `Ctrl + Alt + X`** (or click "截图选题") — one shot, deleted right after recognition. It does not read the screen at other times.
 
 **Where is my data?**
 - Draft / queue / history / settings: `%APPDATA%\学习通答题助手\answer-data.json`
@@ -511,9 +708,12 @@ Electron main process ──IPC──> renderer (UI)
       │                                           ├─ QueryFullProcessImageNameW            read process name
       │                                           └─ SendInput + KEYEVENTF_UNICODE         type characters
       │
-      └── lib/answer-search.js ──┬─ lib/answer-bank.js     local question bank (JSON + fuzzy match)
-                                 ├─ lib/http.js            zero-dep HTTP (Sogou / 360 / Bing)
-                                 └─ lib/textsim.js         normalisation / similarity / answer extraction
+      ├── lib/answer-search.js ──┬─ lib/answer-bank.js     local question bank (JSON + fuzzy match)
+      │                          ├─ lib/http.js            zero-dep HTTP (Sogou / 360 / Bing)
+      │                          └─ lib/textsim.js         normalisation / similarity / answer extraction
+      │
+      └── lib/ocr.js ────────────┬─ AI vision model (OpenAI-compatible, primary/fallback cascade)
+        (v1.2.0)                 └─ lib/ocr-win.ps1        WinRT Windows.Media.Ocr (offline fallback)
 ```
 
 **Three things that shaped the search implementation:**
@@ -522,7 +722,13 @@ Electron main process ──IPC──> renderer (UI)
 - **Normalisation must not strip punctuation.** Text similarity pipelines usually drop all punctuation, but `+ - = . / ( ) ² √ π` are all meaningful in maths; strip them and `a+b=3` and `a-b=3` collapse into the same string.
 - **You cannot compare a question against a whole snippet.** The question is a dozen characters, the snippet three or four hundred; direct comparison dilutes the score to around 0.2 and ranking becomes useless. So the title, the snippet head, and the full blob are each scored, and the maximum is taken — question-bank pages usually put the question verbatim in the title.
 
-**Zero third-party runtime dependencies**: the HTTP client is written against Node's built-in `http/https/zlib` (redirects, timeouts, gzip/deflate/br decompression, response size cap); HTML parsing is regex plus entity decoding, no DOM library; the question bank is a single JSON file. Apart from `electron` and `koffi`, there is nothing else.
+**Zero third-party runtime dependencies**: the HTTP client is written against Node's built-in `http/https/zlib` (redirects, timeouts, gzip/deflate/br decompression, response size cap); HTML parsing is regex plus entity decoding, no DOM library; the question bank is a single JSON file; and image recognition uses no SDK either — the vision model is called with `fetch` and a base64 image, and the built-in OCR path is a PowerShell script over WinRT. Apart from `electron` and `koffi`, there is nothing else.
+
+**Three notes on the recognition pipeline:**
+
+- **Windows built-in OCR is unusable for maths, so it is fallback only.** In testing `a²`→`a2`, `3²`→`32`, minus `−`→the Chinese character `一`, and whole option lines went missing. Hence AI vision is the primary path; the built-in engine only runs when no key is configured or the model call fails — and the UI shows a yellow warning whenever it is used, so nobody mistakes it for a good result.
+- **Calling WinRT from PowerShell 5.1 has two traps.** First, `.GetAwaiter()` **does not work** on `IAsyncOperation` ("cannot call a method on System.__ComObject") — you must bridge with `AsTask` reflection. Second, the backtick in `IAsyncOperation\`1` is an escape character inside **double-quoted** strings and gets eaten, so single quotes are required. WinRT's file APIs also reject forward slashes, and `$res.Lines.Count` silently yields nothing — use `@($res.Lines).Count`. All of this is annotated in `ocr-win.ps1`.
+- **Selection coordinates are the easiest thing to break silently.** A frameless window is implicitly constrained to the *work area* (measured height 1040 instead of the screen's 1080). If the background image then gets stretched by CSS, "where you drew the box" and "what actually got cropped" diverge — we once boxed a question and got the taskbar clock. The fix is to lay the background out at exact **1:1** screen pixels and force `setBounds()` after `show()`, plus a pixel-level self-test (`SP_CAPTURETEST`) to guard it.
 
 **Search engine adapters**: Sogou (best hit rate for Chinese question banks) → 360 (more resilient, and its result pages expose the real URL directly, no redirect to resolve) → Bing (fallback). They are tried in order and the first one that yields parseable results wins; any engine that serves a CAPTCHA page is put on a cooldown and skipped.
 
@@ -542,11 +748,21 @@ npm install          # install dependencies
 npm start            # run in development
 npm run start:safe   # if the sandboxed/GPU-restricted environment fails to start
 npm run icons        # regenerate icons after editing tools/make-icons.js
-npm run build        # package into an exe (output in dist-installer-v4/)
+node tools/make-question-image.js   # generate a photo-like sample question for offline OCR tests
+npm run build        # package into an exe (output in dist-installer-v5/)
 ```
 
 > For repeat builds, use a fresh output directory to avoid a failed cleanup of the old one:
-> `npx electron-builder --win --config.directories.output=dist-installer-v5`
+> `npx electron-builder --win --config.directories.output=dist-installer-v6`
+>
+> **If the build fails with `unable to verify the first certificate`**, your network has an HTTPS proxy
+> doing TLS interception (common on corporate networks). If `curl -k` downloads fine, the content is
+> fine — the certificate chain just is not trusted. Workaround:
+> `NODE_TLS_REJECT_UNAUTHORIZED=0 npx electron-builder --win`
+> (only do this if you trust the local network.)
+>
+> Also note: `--dir` only produces `win-unpacked` and does **not** build an installer. Setup/Portable
+> require `--win`, and the first such build needs to download winCodeSign (~2.5 MB).
 
 ### Publishing to your own GitHub repository
 
@@ -559,18 +775,18 @@ The finished binaries are in `release/`. Pick one of three routes.
 ```bash
 git init
 git add .
-git commit -m "StudyAnswerHelper v1.1.0: source"
+git commit -m "StudyAnswerHelper v1.2.0: source"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
 
 # then publish a release (requires the GitHub CLI: https://cli.github.com/)
-gh release create v1.1.0 \
-  "release/StudyAnswerHelper-Setup-1.1.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.1.0.exe" \
+gh release create v1.2.0 \
+  "release/StudyAnswerHelper-Setup-1.2.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.2.0.exe" \
   "release/使用说明.txt" \
-  --title "StudyAnswerHelper v1.1.0" \
-  --notes "Adds answer search: local bank / web search / AI"
+  --title "StudyAnswerHelper v1.2.0" \
+  --notes "Adds photo-question OCR, on-screen region capture, and a 5-second auto-enter countdown"
 ```
 
 The download links in this README use the relative path `../../releases`, so they work out of the box with this route.
@@ -580,7 +796,7 @@ The download links in this README use the relative path `../../releases`, so the
 ```bash
 git init
 git add .            # release/ is not gitignored, so the exes are included
-git commit -m "StudyAnswerHelper v1.1.0 (with binaries)"
+git commit -m "StudyAnswerHelper v1.2.0 (with binaries)"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
@@ -593,14 +809,15 @@ git push -u origin main
 
 ### Automated verification
 
-Four self-check harnesses ship with the project. Run them after touching the code:
+Five self-check harnesses ship with the project. Run them after touching the code:
 
 | Env var | What it does |
 |---|---|
-| `SP_SELFTEST=1` | **Interaction-level self-test**: 32 assertions inside the real renderer, including `elementFromPoint` hit-testing for "can the user actually click this?" — programmatic `click()` bypasses stacking order and hides real defects — plus the offline answer-search loop, the question-bank modal, and a security assertion that the API key never reaches the renderer. |
+| `SP_SELFTEST=1` | **Interaction-level self-test**: 39 assertions inside the real renderer, including `elementFromPoint` hit-testing for "can the user actually click this?" — programmatic `click()` bypasses stacking order and hides real defects — plus the offline answer-search loop, recognition-result rendering and its read-only state, the auto-enter overlay, the question-bank modal, and two separate assertions that neither API key reaches the renderer. |
 | `SP_SMOKE=1` | **Real keystroke injection**: opens a test window titled "学习通" and types `数学答案：√3 + 1/2 ≈ 1.366` with actual `SendInput`, then reads it back and compares character for character. |
-| `SP_SHOT=1` | **Visual walkthrough**: captures five pages × two themes into `preview/` as PNGs. Uses freshly generated demo data so real answers never end up in the screenshots. |
+| `SP_SHOT=1` | **Visual walkthrough**: captures six pages × two themes into `preview/` as PNGs. Uses freshly generated demo data so real answers never end up in the screenshots. |
 | `SP_SEARCHTEST=1` | **Live search path**: runs one real three-source search and logs candidates and errors verbatim. Deliberately separate from the self-test — the self-test must be reproducible offline, whereas this path depends on third-party search engines. |
+| `SP_CAPTURETEST=1` | **Live recognition path**: actually opens the full-screen capture overlay and runs capture → crop → OCR → persist. Add `SP_CAPTURE_KEEP=x.png` to dump both the overlay and the crop for eyeballing. |
 
 Measured on the v1.1.0 artifacts (development tree and the packaged exe, same results):
 
@@ -611,6 +828,23 @@ SP_SMOKE       5 passed / 0 failed
 SP_SEARCHTEST local bank hit at 1.000 and auto-filled the box; Sogou returned 9 leads, top relevance 0.905
 ```
 
+Measured on v1.2.0 (development tree, packaged `win-unpacked`, and the portable build):
+
+```
+SP_SELFTEST     39 passed / 0 failed / 0 renderer JS errors
+SP_SMOKE         5 passed / 0 failed, keystroke injection byte-identical (21 chars / 450–459 ms)
+SP_SHOT          6 pages × 2 themes
+SP_CAPTURETEST   overlay 1920×1080 == screen; background 1:1, not stretched;
+                 crop 960×324 == selection mapped to pixels;
+                 crop contents byte-identical to the selected region over 16×16 (diff index = -1);
+                 recognised text persisted; overlay closed, main window restored
+```
+
+> The pixel comparison in `SP_CAPTURETEST` deliberately runs with **upscaling disabled**: with upscaling on,
+> every output pixel is a blend of its neighbours, so a byte comparison always differs by a few levels.
+> Turning it off is what makes it a hard proof that "what you boxed is what got cropped" — re-run it after
+> touching any capture code.
+
 ```powershell
 $env:ELECTRON_RUN_AS_NODE = $null      # must be cleared, or Electron boots as plain Node
 $env:SP_SMOKE_LOG = "$PWD\_smoke.log"  # write logs to a file (some terminals swallow stdout)
@@ -620,20 +854,24 @@ $env:SP_SMOKE = "1"
 
 ### Data and privacy
 
-- **Offline by default.** The app only goes online when "Web search" / "AI answer" is ticked, and the only thing it sends is the **question text**.
+- **Offline by default.** The app only goes online when "Web search" / "AI answer" is ticked, or when the OCR engine is set to AI vision.
+- What leaves your machine is exactly two things:
+  - searching: the **question text** (options and redundant whitespace stripped) → Sogou / 360 / Bing
+  - photo questions: **only the region you boxed** (never the full screen) → the vision endpoint you configured
 - Your answers, bank and history live only on your own machine:
   - `%APPDATA%\学习通答题助手\answer-data.json` (draft / queue / history / settings)
   - `%APPDATA%\学习通答题助手\answer-bank.json` (local question bank)
 - No telemetry, no accounts, no analytics.
+- **Screen capture happens only when you press `Ctrl + Alt + X`** (or click "截图选题"): one shot, and the temporary file is deleted right after recognition. The app does not read the screen at any other time and does not log keystrokes.
 - The clipboard is read in exactly two places: when you click "read clipboard", and when you press the search hotkey. Never otherwise.
-- The app reads only the **title and process name** of the foreground window to decide "is this Xuexitong?" — never window contents, never screenshots, never keystrokes.
-- The AI API key is stored in plain text in `answer-data.json` and used **only in the main process** — a self-test assertion guards that it is scrubbed before any state is pushed to the renderer. Use "Clear key" to remove it.
+- The app reads only the **title and process name** of the foreground window to decide "is this Xuexitong?" — never window contents.
+- API keys (AI answer, AI vision) are stored in plain text in `answer-data.json` and used **only in the main process**. Self-test assertions guard that **neither key reaches the renderer**: every state pushed to the UI is scrubbed first. Use "Clear key" to remove them.
 
 ### Disclaimer
 
 This tool exists to **cut down repetitive manual entry**, and it circumvents no exam or assignment mechanism.
 
-Since v1.1.0 it can also **look up answers to a question** — but those results come from public web pages, or from an AI model you configure yourself. They are **leads only, not guaranteed correct**. Answers extracted from web pages are tagged "疑似请核对" (suspected — please verify). Always make your own call before entering anything. **It replaces your hands and your searching, not your judgement.**
+Since v1.1.0 it can also **look up answers to a question**, and since v1.2.0 it can **read a question out of a photo** — but those results come from public web pages, or from an AI model you configure yourself. They are **leads only, not guaranteed correct** (OCR can misread digits and operators, and web-extracted answers are tagged "疑似请核对" / suspected — please verify). Always make your own call before entering anything. **It replaces your hands, your eyes and your searching, not your judgement.**
 
 Use it where you **have the right to enter the content** — a teacher entering reference answers, entering answers you have already worked out yourself, or organising teaching material. Follow your institution's rules for its learning platform. Users bear full responsibility for any consequences of misuse.
 

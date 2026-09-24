@@ -38,11 +38,27 @@
 
       <div class="editor-wrap">
         <textarea id="answerBox" spellcheck="false" autocomplete="off"
-          placeholder="把答案写在这里（可直接 Ctrl+V 粘贴），或到右边「搜答案」里搜一题。写好后按 Ctrl+Alt+Enter 自动逐字输入到学习通。"></textarea>
+          placeholder="答案写在这里。图片题先到右边「搜答案」里点「截图选题」，识别出来的答案会自动填进这个框。写好后按 Ctrl+Alt+Enter 自动逐字输入到学习通。"></textarea>
         <div class="countdown" id="countdown" hidden>
           <span class="cd-num" id="cdNum">3</span>
           <span class="cd-text">秒后自动输入到学习通…</span>
           <button class="mini danger" id="cdCancel">取消（Esc）</button>
+        </div>
+
+        <!-- 识别 → 搜答案 → 自动输入的倒计时浮层（按 Esc 或点取消可打断） -->
+        <div class="autoin" id="autoInputOverlay" hidden>
+          <div class="autoin-head">
+            <span class="autoin-num" id="autoInputNum">5</span>
+            <div class="autoin-title">
+              <strong>秒后自动切到学习通输入答案</strong>
+              <span class="autoin-from" id="autoInputFrom"></span>
+            </div>
+          </div>
+          <div class="autoin-preview" id="autoInputPreview"></div>
+          <div class="autoin-ops">
+            <button class="mini danger" id="autoInputCancelBtn">取消（Esc）</button>
+            <button class="mini" id="autoInputNowBtn">立即输入</button>
+          </div>
         </div>
       </div>
 
@@ -95,24 +111,38 @@
             <span class="spacer"></span>
             <span class="muted" id="searchMeta"></span>
           </div>
-          <textarea id="questionBox" class="qbox" spellcheck="false"
-            placeholder="把题目粘到这里（Ctrl+V），再点下面的「搜答案」。&#10;也可以在学习通里复制题目，直接按搜题热键。"></textarea>
-          <div class="row-ops">
-            <button class="mini" id="qPasteBtn">读剪贴板</button>
-            <button class="mini" id="qClearBtn">清空题目</button>
-            <span class="spacer"></span>
-            <button class="mini" id="qUseDraftBtn" title="把大框里的内容当成题目来搜">用大框当题目</button>
+
+          <!-- 识别状态 -->
+          <div class="ocrbar" id="ocrBar">
+            <span class="dot" id="ocrDot"></span>
+            <span class="ocr-label" id="ocrLabel">还没有识别过题目</span>
           </div>
-          <div class="search-src">
-            <label class="chk"><input type="checkbox" id="srcLocalChk"><span>本地题库</span></label>
-            <label class="chk"><input type="checkbox" id="srcWebChk"><span>网络检索</span></label>
-            <label class="chk"><input type="checkbox" id="srcAiChk"><span>AI 解答</span></label>
-          </div>
-          <button class="primary slim" id="searchBtn">
-            <span>搜答案</span><kbd id="kbdSearch">Ctrl+Alt+F</kbd>
+
+          <!-- 主操作：截图选题 -->
+          <button class="primary slim" id="captureBtn">
+            <span>截图选题</span><kbd id="kbdCapture">Ctrl+Alt+X</kbd>
           </button>
-          <div class="hint" id="searchHint">「网络检索」拿的是公开网页上的线索，抽到的答案会标成「疑似」，请核对后再输入。</div>
+
+          <div class="row-ops">
+            <button class="mini" id="ocrRerunBtn" title="用上一次的截图重新识别（例如刚换了模型）">重新识别</button>
+            <button class="mini" id="ocrEditBtn" title="识别有误时可以手动修正">修正题目</button>
+            <button class="mini" id="ocrSaveEditBtn" hidden>保存修改</button>
+            <button class="mini" id="ocrCancelEditBtn" hidden>放弃修改</button>
+            <span class="spacer"></span>
+            <span class="muted" id="ocrStats"></span>
+          </div>
+
+          <!-- 识别出来的题目：默认只读，点「修正题目」才能编辑 -->
+          <textarea id="questionBox" class="qbox" spellcheck="false" readonly
+            placeholder="点上面的「截图选题」，框选题目区域，识别结果会出现在这里。"></textarea>
+          <div class="hint warnbox" id="ocrWarn" hidden></div>
+
+          <button class="primary slim" id="searchBtn">
+            <span>重新搜答案</span><kbd id="kbdSearch">Ctrl+Alt+F</kbd>
+          </button>
+
           <div class="list" id="searchResult"></div>
+
           <div class="pane-foot">
             <button class="mini" id="saveBankBtn" title="把当前题目和大框里的答案存进本地题库">题目+大框答案存题库</button>
             <span class="spacer"></span>
@@ -174,16 +204,61 @@
 
           <div class="setgroup">
             <div class="setgroup-title">搜答案</div>
+            <div class="search-src">
+              <label class="chk"><input type="checkbox" id="srcLocalChk"><span>本地题库</span></label>
+              <label class="chk"><input type="checkbox" id="srcWebChk"><span>网络检索</span></label>
+              <label class="chk"><input type="checkbox" id="srcAiChk"><span>AI 解答</span></label>
+            </div>
             <label class="row"><span>搜索引擎</span><select id="searchEngineSel"></select></label>
             <label class="row"><span>本地题库命中阈值</span><select id="searchScoreSel"></select></label>
             <label class="row"><span>候选条数</span><select id="searchTopSel"></select></label>
             <label class="row"><span>网络请求超时</span><select id="searchTimeoutSel"></select></label>
-            <label class="row"><span>搜题热键（剪贴板取题）</span><select id="hotkeySearchSel"></select></label>
             <label class="row switchrow" id="searchAutoFillRow">
               <span>高可信答案自动填进大框</span>
               <span class="switch small"><input type="checkbox" id="searchAutoFillChk"><span class="track"><span class="knob"></span></span></span>
             </label>
             <div class="hint" id="searchEngineState"></div>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">图片识别（截图选题）</div>
+            <label class="row"><span>识别引擎</span><select id="ocrEngineSel"></select></label>
+            <label class="col"><span class="muted">视觉模型（主）</span>
+              <input type="text" id="ocrModelInp" spellcheck="false" placeholder="glm-4v-flash"></label>
+            <label class="col"><span class="muted">视觉模型（备选，主模型失败时自动换）</span>
+              <input type="text" id="ocrFallbackInp" spellcheck="false" placeholder="deepseek-v4-flash"></label>
+            <label class="col"><span class="muted">视觉接口地址（留空＝与「AI 解答」共用）</span>
+              <input type="text" id="ocrBaseUrlInp" spellcheck="false" placeholder="https://open.bigmodel.cn/api/paas/v4"></label>
+            <label class="col"><span class="muted">视觉密钥（留空＝与「AI 解答」共用）</span>
+              <input type="password" id="ocrKeyInp" spellcheck="false" placeholder="留空表示不改动已保存的密钥"></label>
+            <div class="row-ops">
+              <button class="mini" id="ocrSaveKeyBtn">保存视觉密钥</button>
+              <button class="mini" id="ocrClearKeyBtn">清除</button>
+              <button class="mini" id="ocrTestBtn">测试视觉模型</button>
+              <button class="mini" id="ocrLangsBtn">检测系统 OCR</button>
+            </div>
+            <label class="row"><span>小图放大倍数</span><select id="ocrUpscaleSel"></select></label>
+            <label class="row"><span>识别超时</span><select id="ocrTimeoutSel"></select></label>
+            <div class="hint" id="ocrKeyState"></div>
+            <div class="hint">推荐智谱 <b>glm-4v-flash</b>（有免费额度、国内可直连，去 bigmodel.cn 注册拿 Key）。
+              不配也能用系统自带 OCR，但它会把 a² 认成 a2、3² 认成 32，搜题成功率很低。</div>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">识别之后的自动流程</div>
+            <label class="row switchrow" id="ocrAutoSearchRow">
+              <span>识别出题目就自动搜答案</span>
+              <span class="switch small"><input type="checkbox" id="ocrAutoSearchChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row switchrow" id="autoInputRow">
+              <span>搜到答案后自动切到学习通输入</span>
+              <span class="switch small"><input type="checkbox" id="autoInputChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row"><span>倒计时秒数</span><select id="autoInputDelaySel"></select></label>
+            <label class="row"><span>截图选题热键</span><select id="hotkeyCaptureSel"></select></label>
+            <label class="row"><span>搜题热键（剪贴板取题）</span><select id="hotkeySearchSel"></select></label>
+            <div class="hint">打开后：<b>截图 → 识别题目 → 搜答案 → 倒计时 → 自动切回学习通逐字输入</b>。
+              倒计时期间按 <b>Esc</b> 或点「取消」可随时打断；输入前会先把答案写进左边大框，事后能查。</div>
           </div>
 
           <div class="setgroup">

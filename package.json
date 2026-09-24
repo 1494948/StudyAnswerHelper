@@ -1,7 +1,7 @@
 {
   "name": "study-answer-helper",
   "productName": "学习通答题助手",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A large input box plus global hotkey / auto-trigger tool that types your answers into Xuexitong (Chaoxing) character by character, with a built-in answer search (local bank / web / AI).",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "productName": "学习通答题助手",
     "copyright": "Copyright © 2026 Xu",
     "directories": {
-      "output": "dist-installer-v4",
+      "output": "dist-installer-v5",
       "buildResources": "assets"
     },
     "files": [
@@ -39,6 +39,7 @@
     "asar": true,
     "asarUnpack": [
       "src/main/engine/**",
+      "src/main/lib/ocr-win.ps1",
       "node_modules/koffi/**",
       "node_modules/@koromix/**",
       "assets/**"

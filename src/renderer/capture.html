@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
+<title>框选题目</title>
+<link rel="stylesheet" href="css/capture.css">
+</head>
+<body>
+
+<!-- 屏幕原图作为底 -->
+<img id="bg" alt="" draggable="false">
+
+<!-- 选区：用超大 box-shadow 造出"外面变暗、里面清晰"的效果（不用 shader，最稳） -->
+<div id="sel" hidden>
+  <span class="h tl"></span><span class="h tr"></span>
+  <span class="h bl"></span><span class="h br"></span>
+  <span id="sizeTag"></span>
+</div>
+
+<!-- 十字准星，帮助对齐 -->
+<div id="cross" hidden><i class="cx"></i><i class="cy"></i></div>
+
+<div id="hint">
+  <strong>拖出题目范围</strong>
+  <span>松手即识别 · <kbd>Esc</kbd> 取消 · 拖好后也可按 <kbd>Enter</kbd></span>
+</div>
+
+<div id="busy" hidden><span class="spin"></span><span id="busyText">正在读取屏幕…</span></div>
+
+<script src="js/capture.js"></script>
+</body>
+</html>

@@ -423,6 +423,65 @@ code {
 /* 提示条要压在弹窗之上，否则弹窗打开时看不到提示 */
 .toasts { z-index: 80; }
 
+/* ================= 图片识别（截图选题） ================= */
+.ocrbar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 6px 10px; font-size: 12px; color: var(--ink-2);
+}
+.ocrbar .ocr-label {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ocrbar.busy { border-color: var(--accent); }
+
+/* 识别结果默认只读：题目只由图片识别产生，点「修正题目」才解锁。
+   这里给得比编辑态高一些——识别出来的题干往往有好几行，
+   框太矮就得滚动才能看全，而用户恰恰需要先核对题目对不对。 */
+.qbox[readonly] {
+  color: var(--ink); background: var(--panel); cursor: default;
+  min-height: 132px; max-height: 240px;
+}
+.qbox[readonly]:focus { border-color: var(--line); }
+
+.hint.warnbox {
+  color: var(--warn);
+  border: 1px dashed var(--warn);
+  background: var(--panel-2);
+  border-radius: 8px; padding: 6px 8px;
+}
+
+/* ================= 自动输入倒计时浮层 ================= */
+/* 这是一个会替你"动手"的操作，所以做得足够醒目，并把将输入的答案原文摆出来 */
+.autoin {
+  position: absolute; left: 14px; right: 14px; bottom: 12px;
+  display: flex; flex-direction: column; gap: 7px;
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .3);
+  z-index: 4;
+}
+.autoin-head { display: flex; align-items: center; gap: 10px; }
+.autoin-num {
+  font-size: 26px; font-weight: 800; line-height: 1; min-width: 36px; text-align: center;
+  color: var(--accent-ink); background: var(--accent);
+  border-radius: 10px; padding: 7px 0;
+  font-variant-numeric: tabular-nums;
+}
+.autoin-title { display: flex; flex-direction: column; line-height: 1.4; min-width: 0; }
+.autoin-title strong { font-size: 13.5px; }
+.autoin-from { font-size: 11.5px; color: var(--ink-2); }
+.autoin-preview {
+  font-size: 12.5px; color: var(--ink);
+  background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px;
+  padding: 6px 9px; max-height: 68px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.autoin-ops { display: flex; gap: 8px; justify-content: flex-end; }
+
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-2); }

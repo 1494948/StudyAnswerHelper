@@ -1,0 +1,85 @@
+/* 框选截图窗口：全屏遮罩 + 拖框选区 */
+
+[hidden] { display: none !important; }
+
+* { box-sizing: border-box; }
+html, body {
+  height: 100%; margin: 0; overflow: hidden;
+  background: #000; cursor: crosshair;
+  font: 14px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+
+#bg {
+  position: fixed; left: 0; top: 0;
+  /* 尺寸由 JS 按屏幕真实像素设置，**1:1 不缩放**。
+     绝不能写成 width/height:100% 或 object-fit：
+     无边框窗口默认被限制在工作区内（避开任务栏），高度可能比屏幕少几十像素，
+     一旦拉伸，选框坐标就和屏幕内容错位了 —— 用户框的是题目，裁出来的是别处。 */
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 选区本身保持原图清晰，外面用超大 box-shadow 压暗 */
+#sel {
+  position: fixed;
+  border: 1px solid #4aa3ff;
+  box-shadow: 0 0 0 9999px rgba(6, 12, 20, .58);
+  pointer-events: none;
+  z-index: 3;
+}
+#sel .h {
+  position: absolute; width: 7px; height: 7px;
+  background: #4aa3ff; border-radius: 1px;
+}
+#sel .h.tl { left: -4px; top: -4px; }
+#sel .h.tr { right: -4px; top: -4px; }
+#sel .h.bl { left: -4px; bottom: -4px; }
+#sel .h.br { right: -4px; bottom: -4px; }
+
+#sizeTag {
+  position: absolute; left: 0; bottom: -26px;
+  display: inline-block; white-space: nowrap;
+  background: #4aa3ff; color: #04121f;
+  font-size: 12px; font-weight: 700; line-height: 1.7;
+  padding: 0 7px; border-radius: 4px;
+}
+/* 选区贴到底边时，尺寸标签翻到选区内侧，避免被屏幕边缘裁掉 */
+#sel.flip #sizeTag { bottom: auto; top: 4px; left: 4px; }
+
+#cross { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+#cross .cx { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(74, 163, 255, .55); }
+#cross .cy { position: absolute; left: 0; right: 0; height: 1px; background: rgba(74, 163, 255, .55); }
+
+#hint {
+  position: fixed; left: 50%; top: 22px; transform: translateX(-50%);
+  z-index: 5; pointer-events: none;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(10, 16, 24, .86); color: #e8eef6;
+  border: 1px solid #2b3a4d; border-radius: 10px;
+  padding: 9px 15px; font-size: 13px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+}
+#hint strong { color: #6fb4ff; font-size: 14px; }
+#hint span { color: #9fb0c4; font-size: 12px; }
+#hint kbd {
+  font: 11px/1 "Consolas", monospace;
+  background: rgba(127, 127, 127, .25); border-radius: 4px;
+  padding: 2px 5px; color: #cdd9e6;
+}
+
+#busy {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  z-index: 6; pointer-events: none;
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(10, 16, 24, .9); color: #e8eef6;
+  border: 1px solid #2b3a4d; border-radius: 10px;
+  padding: 12px 18px; font-size: 13px;
+}
+#busy .spin {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid rgba(111, 180, 255, .28);
+  border-top-color: #6fb4ff;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

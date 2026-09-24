@@ -58,10 +58,29 @@ contextBridge.exposeInMainWorld('sp', {
     exportFile: () => invoke('bank:exportFile')
   },
   aiTest: (cfg) => invoke('ai:test', cfg),
+  capture: {
+    start: () => invoke('capture:start')
+  },
+  ocr: {
+    rerun: () => invoke('ocr:rerun'),
+    test: () => invoke('ocr:test'),
+    langs: () => invoke('ocr:langs')
+  },
+  question: {
+    /* 题目只由图片识别产生；这里只用于"识别错了手动修正" */
+    set: (text) => invoke('question:set', text)
+  },
+  autoInput: {
+    now: () => invoke('autoInput:now'),
+    cancel: () => invoke('autoInput:cancel')
+  },
   onState: (cb) => on('state', cb),
   onFg: (cb) => on('fg', cb),
   onAuto: (cb) => on('auto', cb),
   onToast: (cb) => on('toast', cb),
   onDraft: (cb) => on('draft', cb),
-  onSearch: (cb) => on('search', cb)
+  onSearch: (cb) => on('search', cb),
+  onOcr: (cb) => on('ocr', cb),
+  onQuestion: (cb) => on('question', cb),
+  onAutoInput: (cb) => on('autoinput', cb)
 });

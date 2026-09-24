@@ -16,7 +16,8 @@ if (!electron.app) {
   process.stderr.write('检测到 ELECTRON_RUN_AS_NODE，请清除该环境变量后再启动。\n');
   process.exit(1);
 }
-const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, shell, nativeTheme, clipboard, Notification, screen, dialog } = electron;
+const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, shell, nativeTheme,
+  clipboard, Notification, screen, dialog, desktopCapturer, nativeImage } = electron;
 
 /* 打包后代码封在 app.asar 里，但"原生模块 / 图标 / 可被 fork 执行的脚本"必须是真实文件，
    所以统一走这个函数：优先取 app.asar.unpacked 下的同名解包副本。 */
@@ -34,7 +35,8 @@ function logLine(s) {
 }
 
 /* ---------------- 测试模式：数据隔离（必须在单实例锁之前） ---------------- */
-const TEST_MODE = !!(process.env.SP_SELFTEST || process.env.SP_SMOKE || process.env.SP_SHOT || process.env.SP_SEARCHTEST);
+const TEST_MODE = !!(process.env.SP_SELFTEST || process.env.SP_SMOKE || process.env.SP_SHOT ||
+  process.env.SP_SEARCHTEST || process.env.SP_CAPTURETEST);
 let TEST_DIR = null;
 if (TEST_MODE) {
   TEST_DIR = path.join(app.getPath('temp'), 'study-answer-helper-test');
@@ -97,8 +99,26 @@ const DEFAULT_STATE = {
     aiApiKey: '',
     aiModel: 'deepseek-chat',
     aiMaxTokens: 1200,
-    aiTemperature: 0.2
+    aiTemperature: 0.2,
+
+    /* ---- 图片识别题目（OCR） ---- */
+    ocrEngine: 'auto',              /* auto | ai | windows */
+    ocrModel: 'glm-4v-flash',       /* 主视觉模型（智谱，有免费额度，国内可直连） */
+    ocrFallbackModel: 'deepseek-v4-flash',  /* 备选视觉模型，主模型失败时自动换 */
+    ocrBaseUrl: '',                 /* 视觉接口地址，留空表示与「AI 解答」用同一个 */
+    ocrApiKey: '',                  /* 视觉密钥，留空表示与「AI 解答」用同一个 */
+    ocrMaxTokens: 2000,
+    ocrTimeoutMs: 90000,
+    ocrUpscale: 2,                  /* 选区小图放大倍数，放大能明显提升识别率 */
+
+    /* ---- 识别之后的自动流程 ---- */
+    ocrAutoSearch: true,            /* 识别出题目后自动去搜答案 */
+    autoInputAfterSearch: true,     /* 搜到答案后自动切到学习通输入 */
+    autoInputDelaySec: 5,           /* 倒计时秒数（用户要求 5 秒） */
+    hotkeyCapture: 'c-alt-x'        /* 截图选题热键 */
   },
+  /* 题目现在只由「图片识别」产生，持久化下来便于重启后还能看到上一次识别的结果 */
+  question: '',
   draft: '',
   queue: [],
   queueIndex: 0,
@@ -112,6 +132,7 @@ let S = store.all();
 /* 本地题库：离线答案源，落盘在 userData/answer-bank.json */
 const { AnswerBank } = require('./lib/answer-bank');
 const searchLib = require('./lib/answer-search');
+const ocrLib = require('./lib/ocr');
 const bank = new AnswerBank(path.join(app.getPath('userData'), 'answer-bank.json'));
 
 const HOTKEY_PRESETS = {
@@ -130,6 +151,11 @@ const HOTKEY_SEARCH_PRESETS = {
   'c-alt-q': { label: 'Ctrl + Alt + Q', accel: 'Control+Alt+Q' },
   'f8': { label: 'F8', accel: 'F8' }
 };
+const HOTKEY_CAPTURE_PRESETS = {
+  'c-alt-x': { label: 'Ctrl + Alt + X', accel: 'Control+Alt+X' },
+  'c-alt-g': { label: 'Ctrl + Alt + G', accel: 'Control+Alt+G' },
+  'f7': { label: 'F7', accel: 'F7' }
+};
 const SEARCH_ENGINE_OPTIONS = {
   auto: '自动（搜狗 → 360 → 必应）',
   sogou: '只用搜狗',
@@ -138,6 +164,13 @@ const SEARCH_ENGINE_OPTIONS = {
 };
 const SEARCH_SCORE_OPTIONS = { 0.45: '宽松（0.45）', 0.55: '标准（0.55）', 0.65: '严格（0.65）', 0.75: '很严格（0.75）' };
 const SEARCH_TOP_OPTIONS = { 4: '4 条', 6: '6 条', 10: '10 条' };
+const OCR_ENGINE_OPTIONS = {
+  auto: '自动（AI 视觉 → 系统 OCR）',
+  ai: '只用 AI 视觉模型',
+  windows: '只用系统 OCR（离线，公式会丢）'
+};
+const AUTO_INPUT_DELAY_OPTIONS = { 3: '3 秒', 5: '5 秒', 8: '8 秒', 12: '12 秒' };
+const OCR_UPSCALE_OPTIONS = { 1: '不放大', 2: '放大 2 倍（推荐）', 3: '放大 3 倍', 4: '放大 4 倍' };
 const CLEANUP_LEVELS = {
   none: '不处理',
   light: '去首尾空白 + 合并空行',
@@ -193,7 +226,7 @@ let wasMatched = false;
 let lastToastAt = 0;
 const auto = { active: false, remain: 0, timer: null, lastFireAt: 0, hwnd: 0 };
 let lastInsert = { at: 0, ok: false, msg: '' };
-let hotkeyStatus = { mainOk: false, nextOk: false, searchOk: false };
+let hotkeyStatus = { mainOk: false, nextOk: false, searchOk: false, captureOk: false };
 
 /* ---------------- 搜答案运行时状态 ---------------- */
 const searchState = {
@@ -213,6 +246,54 @@ const searchState = {
 const settings = () => S.settings || DEFAULT_STATE.settings;
 
 const SOURCE_LABEL = { local: '本地题库', web: '网络检索', ai: 'AI 解答' };
+
+/* ---------------- 图片识别运行时状态 ---------------- */
+let captureWin = null;           /* 全屏框选截图窗口 */
+let captureBusy = false;         /* 防止连点开两个遮罩 */
+let captureCtx = null;           /* { full: nativeImage, display, startedAt } */
+
+const ocrState = {
+  active: false,
+  at: 0,
+  ms: 0,
+  provider: '',                  /* ai | windows */
+  model: '',
+  text: '',
+  rawText: '',
+  engineLabel: '',
+  attempts: [],
+  errors: [],
+  image: { width: 0, height: 0, path: '' },
+  warn: ''                       /* 识别质量警告（例如系统 OCR 会丢上标） */
+};
+
+/* 识别质量自检：系统 OCR 会把 a² 认成 a2、3² 认成 32，这类损坏会让搜题失败，
+   这里做一次轻量探测，命中就在界面上明确提醒用户"这次结果不可靠"。 */
+function ocrQualityWarn(provider, text) {
+  const t = String(text || '');
+  if (!t.trim()) return '识别结果是空的，可能框选区域不是题目';
+  const warns = [];
+  if (provider === 'windows') {
+    warns.push('系统自带 OCR 会丢掉上标和公式（a² 可能变成 a2），搜题成功率低，建议配置视觉模型');
+    if (/[\u4e00-\u9fff]\d/.test(t.replace(/\d+\s*[.、)]/g, ''))) {
+      warns.push('文本里出现"汉字紧跟数字"，可能是符号识别错误');
+    }
+  }
+  if (/[\u4e00-\u9fffA-Za-z]\d(?![.\d、)])/.test(t) && /[a-z]\d/.test(t)) {
+    if (provider === 'windows') warns.push('公式部分疑似损坏');
+  }
+  if (text.indexOf('〖?〗') >= 0) warns.push('有看不清的字（已标为〖?〗），请核对');
+  return warns.join('；');
+}
+
+/* 归一化识别文本：模型偶尔会带上序号/引号/多余空行 */
+function cleanOcrText(s) {
+  let t = String(s === undefined || s === null ? '' : s).replace(/\r\n?/g, '\n');
+  t = t.replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+  t = t.split('\n').map((l) => l.replace(/[ \t\u3000]+$/, '').replace(/^[ \t\u3000]+/, '')).join('\n');
+  t = t.replace(/\n{3,}/g, '\n\n').trim();
+  return t;
+}
 
 /* ---------------- 输入引擎 ---------------- */
 function enginePath() {
@@ -295,6 +376,10 @@ function onEngineMessage(msg) {
   } else if (msg.type === 'esc') {
     if (auto.active) {
       autoCancel('已按 Esc 取消');
+    }
+    /* 自动输入的倒计时同样可以用 Esc 打断 */
+    if (autoInput.active) {
+      autoInputCancel('已按 Esc 取消');
     }
   } else if (msg.type === 'fatal') {
     engineError = '输入引擎异常：' + msg.err;
@@ -531,12 +616,22 @@ function setDraftText(text) {
   return S.draft;
 }
 
-/** 设置对象给渲染层时要脱敏：AI 密钥不能出主进程 */
+/** 设置对象给渲染层时要脱敏：AI 密钥不能出主进程（文本密钥与视觉密钥都要脱） */
 function publicSettings() {
   const st = Object.assign({}, settings());
-  st.aiKeySet = !!String(st.aiApiKey || '').trim();
-  st.aiKeyHint = st.aiKeySet ? ('已保存（尾号 ' + String(st.aiApiKey).slice(-4) + '）') : '';
+  const aiKey = String(st.aiApiKey || '').trim();
+  const ocrKey = String(st.ocrApiKey || '').trim();
+
+  st.aiKeySet = !!aiKey;
+  st.aiKeyHint = aiKey ? ('已保存（尾号 ' + aiKey.slice(-4) + '）') : '';
+  st.ocrKeySet = !!ocrKey;
+  st.ocrKeyHint = ocrKey ? ('已保存（尾号 ' + ocrKey.slice(-4) + '）') : '';
+  /* 视觉识别留空时会复用「AI 解答」的密钥，界面要能如实说明这一点 */
+  st.ocrKeyEffective = !!(ocrKey || aiKey);
+  st.ocrKeyReuseAi = !ocrKey && !!aiKey;
+
   delete st.aiApiKey;
+  delete st.ocrApiKey;
   return st;
 }
 
@@ -689,6 +784,9 @@ async function runSearchNow(payload) {
     }
   }
 
+  /* 图片识别触发的检索：拿到答案就进入"倒计时 → 切到学习通自动输入" */
+  if (p.fromOcr) autoInputFromSearch(res);
+
   send('search', publicSearch(true));
   pushState();
   logLine('检索完成 ' + list.length + ' 条 / ' + searchState.ms + 'ms / ' + (searchState.engine || '无网络结果'));
@@ -760,6 +858,461 @@ async function importBankFile() {
   else toast('导入失败：' + res.err, 'error');
   pushState();
   return Object.assign({ path: r.filePaths[0] }, res);
+}
+
+/* ================= 图片识别题目（框选截图 → OCR → 搜答案 → 自动输入） ================= */
+
+/** 题目文本：现在只能由「图片识别」产生（已取消手动输入） */
+function setQuestionText(text) {
+  const t = String(text === undefined || text === null ? '' : text).slice(0, 8000);
+  S.question = t;
+  store.set('question', t);
+  send('question', t);
+  return t;
+}
+
+/** 拼出 OCR 调用参数：视觉模型可以单独配接口与密钥，留空则复用「AI 解答」的 */
+function ocrOptions() {
+  const st = settings();
+  const key = String(st.ocrApiKey || '').trim() || String(st.aiApiKey || '').trim();
+  const base = String(st.ocrBaseUrl || '').trim() || String(st.aiBaseUrl || '').trim();
+  return {
+    engine: st.ocrEngine || 'auto',
+    hasAiKey: !!key,
+    ai: {
+      apiKey: key,
+      baseUrl: base,
+      model: String(st.ocrModel || '').trim(),
+      fallbackModel: String(st.ocrFallbackModel || '').trim(),
+      maxTokens: parseInt(st.ocrMaxTokens, 10) || 2000,
+      timeoutMs: parseInt(st.ocrTimeoutMs, 10) || 90000
+    },
+    timeoutMs: parseInt(st.ocrTimeoutMs, 10) || 90000
+  };
+}
+
+/* 题目正文走 publicState().question，所以状态推送里不需要重复带一份 ocr.text */
+function publicOcr(includeText) {
+  const st = settings();
+  const key = String(st.ocrApiKey || '').trim() || String(st.aiApiKey || '').trim();
+  const out = {
+    active: ocrState.active,
+    at: ocrState.at,
+    ms: ocrState.ms,
+    provider: ocrState.provider,
+    usedModel: ocrState.model,          /* 这次实际用的是哪个模型 */
+    engineLabel: ocrState.engineLabel,
+    attempts: ocrState.attempts,
+    errors: ocrState.errors,
+    image: ocrState.image,
+    warn: ocrState.warn,
+    hasAiKey: !!key,
+    usingAiKey: !String(st.ocrApiKey || '').trim() && !!String(st.aiApiKey || '').trim(),
+    engine: st.ocrEngine || 'auto',
+    model: String(st.ocrModel || ''),           /* 配置里的主模型 */
+    fallbackModel: String(st.ocrFallbackModel || '')
+  };
+  if (includeText) out.text = ocrState.text;
+  return out;
+}
+
+/**
+ * 识别质量自检。
+ * 系统自带 OCR 实测会把 a² 认成 a2、3² 认成 32、− 认成"一"，这类损坏会让搜题失败，
+ * 所以命中特征时必须在界面上明确告诉用户"这次结果不可靠"，而不是假装识别成功了。
+ */
+function ocrQualityWarn(provider, text) {
+  const t = String(text || '');
+  if (!t.trim()) return '识别结果是空的，可能框选的位置不是题目';
+
+  const warns = [];
+  if (provider === 'windows') {
+    warns.push('系统自带 OCR 会丢上标和公式（a² 可能变 a2），搜题成功率低，建议配一个视觉模型');
+  }
+  if (text.indexOf('〖?〗') >= 0) warns.push('有看不清的字（已标为〖?〗）');
+  /* "小写字母紧跟数字" 是上标丢失的典型痕迹：a2 / b2 / 32 */
+  const lostSup = t.match(/[a-z]\d(?![\d.、)])/g);
+  if (lostSup && lostSup.length >= 2 && provider === 'windows') {
+    warns.push('公式部分疑似损坏（如 a2 应为 a²）');
+  }
+  return warns.join('；');
+}
+
+/**
+ * 从整屏截图里裁出选区。
+ * 关键点：缩略图的像素尺寸与窗口的 CSS 尺寸不一定 1:1（受 DPI 缩放影响），
+ * 所以这里**用两个实际尺寸算比例**，不假设 scaleFactor 是多少，两种情况都成立。
+ */
+function cropSelection(full, rect, view, display) {
+  const size = full.getSize();
+  const vw = (view && view.width) || display.bounds.width;
+  const vh = (view && view.height) || display.bounds.height;
+  const kx = size.width / vw;
+  const ky = size.height / vh;
+
+  let x = Math.round(rect.x * kx);
+  let y = Math.round(rect.y * ky);
+  let w = Math.round(rect.w * kx);
+  let h = Math.round(rect.h * ky);
+  /* 夹紧，越界会让 crop 抛异常 */
+  x = Math.max(0, Math.min(x, size.width - 1));
+  y = Math.max(0, Math.min(y, size.height - 1));
+  w = Math.max(1, Math.min(w, size.width - x));
+  h = Math.max(1, Math.min(h, size.height - y));
+
+  let img = full.crop({ x: x, y: y, width: w, height: h });
+
+  /* 小图放大能明显提升识别率（视觉模型和系统 OCR 都受益）。
+     但放大后像素总量要设上限，否则 nativeImage.resize 会吃掉大量内存。 */
+  const st = settings();
+  const up = Math.max(1, Math.min(4, parseInt(st.ocrUpscale, 10) || 1));
+  const shortSide = Math.min(w, h);
+  const target = 900;
+  if (up > 1 && shortSide > 0 && shortSide < target) {
+    const f = Math.min(target / shortSide, up);
+    if (f > 1.05) {
+      const nw = Math.round(w * f);
+      const nh = Math.round(h * f);
+      if (nw * nh <= 24 * 1000 * 1000) {
+        img = img.resize({ width: nw, height: nh, quality: 'best' });
+      }
+    }
+  }
+  return img;
+}
+
+function closeCapture() {
+  if (captureWin && !captureWin.isDestroyed()) {
+    try { captureWin.removeAllListeners('closed'); } catch (_) { /* 忽略 */ }
+    try { captureWin.destroy(); } catch (_) { /* 忽略 */ }
+  }
+  captureWin = null;
+  captureBusy = false;
+}
+
+/** 截完图/取消后把主窗口还回来 */
+function restoreMain() {
+  if (mainWin && !mainWin.isDestroyed()) {
+    if (mainWin.isMinimized()) mainWin.restore();
+    mainWin.show();
+    mainWin.focus();
+  }
+}
+
+/**
+ * 开始框选截图：
+ *   藏主窗口 → 抓整屏 → 开全屏遮罩窗口 → 显示截图当底 → 等用户拖框
+ * 结果走 capture:done / capture:cancel 两个 IPC 回来。
+ */
+async function startCapture() {
+  if (captureBusy || captureWin) {
+    toast('截图窗口已经打开了，先把这一次框完或按 Esc 取消', 'warn');
+    return { ok: false, err: 'busy' };
+  }
+  captureBusy = true;
+  const display = screen.getPrimaryDisplay();
+
+  try {
+    /* 不藏起来的话，本程序自己会被截进图里，盖住学习通 */
+    if (mainWin && !mainWin.isDestroyed() && mainWin.isVisible()) mainWin.hide();
+    await delay(280);
+
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: display.size.width, height: display.size.height }
+    });
+    if (!sources || !sources.length) throw new Error('没有取到屏幕内容');
+
+    let src = null;
+    for (const s of sources) {
+      if (String(s.display_id) === String(display.id)) { src = s; break; }
+    }
+    if (!src) src = sources[0];
+    const full = src.thumbnail;
+    if (!full || full.isEmpty()) {
+      throw new Error('截屏结果是空的（可能被系统或安全软件拦截）');
+    }
+    captureCtx = { full: full, display: display, startedAt: Date.now() };
+
+    captureWin = new BrowserWindow({
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+      frame: false,
+      transparent: false,
+      resizable: false,
+      movable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      backgroundColor: '#000000',
+      title: '框选题目',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload-capture.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false
+      }
+    });
+    /* screen-saver 级别才能盖住任务栏与置顶窗口 */
+    try { captureWin.setAlwaysOnTop(true, 'screen-saver'); } catch (_) { /* 忽略 */ }
+    try { captureWin.setVisibleOnAllWorkspaces(true); } catch (_) { /* 忽略 */ }
+    captureWin.on('closed', () => { captureWin = null; captureBusy = false; });
+
+    await captureWin.loadFile(path.join(__dirname, '..', 'renderer', 'capture.html'));
+    captureWin.webContents.send('capture:bg', {
+      dataUrl: full.toDataURL(),
+      width: display.bounds.width,
+      height: display.bounds.height
+    });
+    captureWin.show();
+    /* 无边框窗口默认会被限制在"工作区"里（避开任务栏），高度常常比屏幕少几十像素。
+       这里强制铺满整个屏幕边界，让用户能框到任务栏那一带的内容。
+       （即使这一步失败了也不影响正确性：底图是 1:1 按像素放的，坐标不会错位，只是底部少几十像素看不到。） */
+    try {
+      captureWin.setBounds({
+        x: display.bounds.x,
+        y: display.bounds.y,
+        width: display.bounds.width,
+        height: display.bounds.height
+      });
+    } catch (_) { /* 忽略 */ }
+    captureWin.focus();
+    logLine('截图遮罩已打开 ' + display.bounds.width + 'x' + display.bounds.height +
+      ' 缩略图 ' + full.getSize().width + 'x' + full.getSize().height);
+    return { ok: true };
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    logLine('截图失败：' + msg);
+    closeCapture();
+    captureCtx = null;
+    restoreMain();
+    toast('截图失败：' + msg, 'error');
+    return { ok: false, err: msg };
+  }
+}
+
+/**
+ * 识别一个磁盘上的图片文件，并走完「填题目 → 自动搜答案 → 交给自动输入倒计时」。
+ * 单独抽出来是为了让「重新识别上一次的截图」也能复用同一条收尾逻辑。
+ */
+async function runOcrOnFile(file, size) {
+  const st = settings();
+  ocrState.active = true;
+  ocrState.at = Date.now();
+  ocrState.attempts = [];
+  ocrState.errors = [];
+  ocrState.warn = '';
+  ocrState.image = {
+    width: (size && size.width) || 0,
+    height: (size && size.height) || 0,
+    path: file
+  };
+  pushState();
+  send('ocr', publicOcr(true));
+  showMain();
+
+  let res = null;
+  try {
+    res = await ocrLib.recognize(file, ocrOptions());
+  } catch (e) {
+    res = { ok: false, err: '识别过程出错：' + (e && e.message ? e.message : String(e)), attempts: [], errors: [] };
+  }
+
+  ocrState.active = false;
+  ocrState.at = Date.now();
+  ocrState.ms = res.ms || 0;
+  ocrState.attempts = res.attempts || [];
+  ocrState.errors = res.errors || [];
+
+  if (!res.ok) {
+    ocrState.text = '';
+    ocrState.provider = '';
+    ocrState.engineLabel = '';
+    ocrState.warn = '';
+    if (!ocrState.errors.length) ocrState.errors = [res.err || '识别失败'];
+    toast('识别失败：' + (res.err || '未知原因'), 'error');
+    logLine('识别失败：' + (res.err || '未知原因'));
+    send('ocr', publicOcr(true));
+    pushState();
+    return res;
+  }
+
+  const text = cleanOcrText(res.text);
+  ocrState.text = text;
+  ocrState.rawText = res.rawText || res.text || '';
+  ocrState.provider = res.provider;
+  ocrState.model = res.model || '';
+  ocrState.engineLabel = res.provider === 'ai'
+    ? ('AI 视觉 · ' + (res.model || '模型'))
+    : '系统自带 OCR（离线，公式会丢）';
+  ocrState.warn = ocrQualityWarn(res.provider, text);
+
+  setQuestionText(text);
+  toast('识别完成：' + ocrState.engineLabel + ' · ' + ocrState.ms + 'ms', ocrState.warn ? 'warn' : 'ok');
+  logLine('识别完成 provider=' + res.provider + ' model=' + (res.model || '-') +
+    ' ms=' + ocrState.ms + ' 字数=' + text.length);
+  send('ocr', publicOcr(true));
+  pushState();
+
+  /* 识别出题目就顺手去搜答案；搜到答案后由 autoInputFromSearch 决定要不要自动输入 */
+  if (st.ocrAutoSearch && text.trim()) {
+    await delay(140);
+    await runSearchNow({ question: text, fromOcr: true });
+  }
+  return res;
+}
+
+/** 裁剪结果 → 落临时文件 → 识别 */
+async function recognizeAndFlow(img) {
+  const sz = img.getSize();
+  let tmp = '';
+  try {
+    tmp = path.join(app.getPath('temp'), 'sah-question-' + Date.now() + '.png');
+    fs.writeFileSync(tmp, img.toPNG());
+  } catch (e) {
+    /* 临时目录不可用时退到 userData */
+    try {
+      tmp = path.join(app.getPath('userData'), 'sah-question-' + Date.now() + '.png');
+      fs.writeFileSync(tmp, img.toPNG());
+    } catch (e2) {
+      toast('保存截图失败：' + (e2 && e2.message ? e2.message : String(e2)), 'error');
+      return { ok: false };
+    }
+  }
+  return runOcrOnFile(tmp, sz);
+}
+
+/* ================= 识别后的自动输入（倒计时 → 切到学习通 → 逐字输入） ================= */
+
+const autoInput = { active: false, remain: 0, timer: null, text: '', why: '', from: '' };
+
+function publicAutoInput() {
+  return {
+    active: autoInput.active,
+    remain: autoInput.remain,
+    why: autoInput.why,
+    from: autoInput.from,
+    text: autoInput.text,
+    delaySec: Math.max(1, Math.min(30, parseInt(settings().autoInputDelaySec, 10) || 5))
+  };
+}
+
+/** 检索结果里挑一条"真的有答案"的候选，启动倒计时。
+ *  安全性：按来源可靠性排序（本地题库 > AI > 网络抽取），网络抽取出来的"疑似答案"
+ *  排最后但仍然可用 —— 因为它有 5 秒倒计时可以取消，而用户要的就是自动化。 */
+const AUTO_INPUT_PRIORITY = { local: 0, ai: 1, web: 2 };
+
+function autoInputFromSearch(res) {
+  const st = settings();
+  if (!st.autoInputAfterSearch) return false;
+  if (!res || !res.ok) return false;
+
+  const cands = (res.candidates || []).filter((c) => c.kind === 'answer' && String(c.answer || '').trim());
+  if (!cands.length) return false;
+  cands.sort((a, b) => {
+    const pa = AUTO_INPUT_PRIORITY[a.source] === undefined ? 9 : AUTO_INPUT_PRIORITY[a.source];
+    const pb = AUTO_INPUT_PRIORITY[b.source] === undefined ? 9 : AUTO_INPUT_PRIORITY[b.source];
+    if (pa !== pb) return pa - pb;
+    return (b.score || 0) - (a.score || 0);
+  });
+
+  const cand = cands[0];
+  autoInputStart(
+    String(cand.answer).trim(),
+    (SOURCE_LABEL[cand.source] || cand.source) + (cand.verify ? ' · 疑似，请核对' : ''),
+    cand.source
+  );
+  return true;
+}
+
+function autoInputStart(text, why, from) {
+  if (autoInput.timer) { clearInterval(autoInput.timer); autoInput.timer = null; }
+  const sec = Math.max(1, Math.min(30, parseInt(settings().autoInputDelaySec, 10) || 5));
+  autoInput.active = true;
+  autoInput.remain = sec;
+  autoInput.text = String(text || '');
+  autoInput.why = why || '';
+  autoInput.from = from || '';
+  beep(true);
+  showMain();
+  send('autoinput', publicAutoInput());
+  pushState();
+
+  autoInput.timer = setInterval(() => {
+    if (!autoInput.active) return;
+    autoInput.remain--;
+    if (autoInput.remain <= 0) {
+      clearInterval(autoInput.timer);
+      autoInput.timer = null;
+      autoInput.active = false;
+      send('autoinput', publicAutoInput());
+      pushState();
+      doAutoInput();
+      return;
+    }
+    send('autoinput', publicAutoInput());
+  }, 1000);
+}
+
+function autoInputCancel(why) {
+  if (autoInput.timer) { clearInterval(autoInput.timer); autoInput.timer = null; }
+  const was = autoInput.active;
+  autoInput.active = false;
+  autoInput.remain = 0;
+  autoInput.text = '';
+  autoInput.why = '';
+  autoInput.from = '';
+  send('autoinput', publicAutoInput());
+  if (was) {
+    pushState();
+    if (why) toast('已取消自动输入：' + why, 'warn');
+  }
+}
+
+/** 倒计时结束：写进大框 → 切回学习通 → 逐字输入 */
+async function doAutoInput() {
+  const text = autoInput.text;
+  autoInput.text = '';
+  autoInput.why = '';
+  autoInput.from = '';
+  if (!text) return;
+
+  const st = settings();
+  const cleaned = cleanupText(text, st.cleanup);
+  /* 先落进大框：用户回头看得到这次自动输入了什么 */
+  setDraftText(cleaned);
+  pushState();
+
+  if (!engineReady) {
+    toast('输入引擎未就绪，已取消自动输入', 'error');
+    return;
+  }
+  if (!lastMatchedHwnd) {
+    toast('还没识别到学习通窗口，已取消自动输入。请先切到学习通一次再截图', 'warn');
+    return;
+  }
+
+  logLine('自动输入：切到学习通 hwnd=' + lastMatchedHwnd + ' 字数=' + cleaned.length);
+  engineFocus(lastMatchedHwnd);
+  await delay(420);
+
+  const res = await engineType({ text: cleaned, delayMs: st.charDelayMs, clearFirst: !!st.clearFirst });
+  lastInsert = { at: Date.now(), ok: !!res.ok, msg: res.err || (res.aborted ? '已取消' : '') };
+  if (res.ok) {
+    pushHistory(cleaned);
+    toast('已自动输入 ' + cleaned.length + ' 个字到学习通', 'ok');
+    beep(false);
+    logLine('自动输入完成 ' + res.sent + ' 字 / ' + res.ms + 'ms');
+  } else if (res.aborted) {
+    toast('已按 Esc 取消输入', 'warn');
+  } else {
+    toast('自动输入失败：' + (res.err || '未知原因'), 'error');
+  }
+  pushState();
 }
 
 /* ---------------- 窗口 ---------------- */
@@ -860,8 +1413,9 @@ function updateTray() {
   ]));
 }
 
-function hotkeyLabel(id, next, search) {
-  const map = search ? HOTKEY_SEARCH_PRESETS : (next ? HOTKEY_NEXT_PRESETS : HOTKEY_PRESETS);
+function hotkeyLabel(id, next, search, capture) {
+  const map = capture ? HOTKEY_CAPTURE_PRESETS
+    : (search ? HOTKEY_SEARCH_PRESETS : (next ? HOTKEY_NEXT_PRESETS : HOTKEY_PRESETS));
   return (map[id] || {}).label || '未设置';
 }
 
@@ -892,18 +1446,26 @@ function registerShortcuts() {
   const mainAccel = (HOTKEY_PRESETS[st.hotkeyMain] || HOTKEY_PRESETS['c-alt-enter']).accel;
   const nextAccel = (HOTKEY_NEXT_PRESETS[st.hotkeyNext] || HOTKEY_NEXT_PRESETS['c-alt-down']).accel;
   const searchAccel = (HOTKEY_SEARCH_PRESETS[st.hotkeySearch] || HOTKEY_SEARCH_PRESETS['c-alt-f']).accel;
+  const captureAccel = (HOTKEY_CAPTURE_PRESETS[st.hotkeyCapture] || HOTKEY_CAPTURE_PRESETS['c-alt-x']).accel;
   try { hotkeyStatus.mainOk = globalShortcut.register(mainAccel, () => doInsert('hotkey')); } catch (_) { hotkeyStatus.mainOk = false; }
   try { hotkeyStatus.nextOk = globalShortcut.register(nextAccel, () => useNext()); } catch (_) { hotkeyStatus.nextOk = false; }
-  /* 搜题热键：把窗口带到前面，然后从剪贴板取题搜索 —— 老师在学习通上复制题目后直接按这个键 */
+  /* 搜题热键：把窗口带到前面，然后从剪贴板取题搜索 */
   try {
     hotkeyStatus.searchOk = globalShortcut.register(searchAccel, () => {
       showMain();
       setTimeout(() => { runSearchNow({ fromClipboard: true }); }, 180);
     });
   } catch (_) { hotkeyStatus.searchOk = false; }
+  /* 截图选题热键：直接起截图遮罩（截图时会先把主窗口藏起来，不用先 showMain） */
+  try {
+    hotkeyStatus.captureOk = globalShortcut.register(captureAccel, () => {
+      setTimeout(() => { startCapture(); }, 120);
+    });
+  } catch (_) { hotkeyStatus.captureOk = false; }
   if (!hotkeyStatus.mainOk) logLine('主热键注册失败：' + mainAccel);
   if (!hotkeyStatus.nextOk) logLine('下一条热键注册失败：' + nextAccel);
   if (!hotkeyStatus.searchOk) logLine('搜题热键注册失败：' + searchAccel);
+  if (!hotkeyStatus.captureOk) logLine('截图热键注册失败：' + captureAccel);
 }
 
 function useNext() {
@@ -933,6 +1495,7 @@ function publicState() {
   const st = settings();
   return {
     settings: publicSettings(),
+    question: S.question || '',
     draft: S.draft || '',
     queue: queueList(),
     queueIndex: queueIndex(),
@@ -942,26 +1505,34 @@ function publicState() {
     fg: fg,
     lastMatchedHwnd: lastMatchedHwnd,
     auto: { active: auto.active, remain: auto.remain },
+    autoInput: publicAutoInput(),
+    ocr: publicOcr(false),
     search: publicSearch(false),
     hotkeys: {
       main: hotkeyLabel(st.hotkeyMain),
       next: hotkeyLabel(st.hotkeyNext, true),
       search: hotkeyLabel(st.hotkeySearch, false, true),
+      capture: hotkeyLabel(st.hotkeyCapture, false, false, true),
       mainOk: hotkeyStatus.mainOk,
       nextOk: hotkeyStatus.nextOk,
-      searchOk: hotkeyStatus.searchOk
+      searchOk: hotkeyStatus.searchOk,
+      captureOk: hotkeyStatus.captureOk
     },
     presets: {
       main: Object.keys(HOTKEY_PRESETS).map((k) => ({ id: k, label: HOTKEY_PRESETS[k].label })),
       next: Object.keys(HOTKEY_NEXT_PRESETS).map((k) => ({ id: k, label: HOTKEY_NEXT_PRESETS[k].label })),
-      search: Object.keys(HOTKEY_SEARCH_PRESETS).map((k) => ({ id: k, label: HOTKEY_SEARCH_PRESETS[k].label }))
+      search: Object.keys(HOTKEY_SEARCH_PRESETS).map((k) => ({ id: k, label: HOTKEY_SEARCH_PRESETS[k].label })),
+      capture: Object.keys(HOTKEY_CAPTURE_PRESETS).map((k) => ({ id: k, label: HOTKEY_CAPTURE_PRESETS[k].label }))
     },
     labels: {
       cleanup: CLEANUP_LEVELS,
       delay: DELAY_OPTIONS,
       searchEngine: SEARCH_ENGINE_OPTIONS,
       searchScore: SEARCH_SCORE_OPTIONS,
-      searchTop: SEARCH_TOP_OPTIONS
+      searchTop: SEARCH_TOP_OPTIONS,
+      ocrEngine: OCR_ENGINE_OPTIONS,
+      autoInputDelay: AUTO_INPUT_DELAY_OPTIONS,
+      upscale: OCR_UPSCALE_OPTIONS
     },
     dataFile: path.join(app.getPath('userData'), 'answer-data.json'),
     bankFile: path.join(app.getPath('userData'), 'answer-bank.json'),
@@ -1004,7 +1575,8 @@ function registerIpc() {
     }
     store.set('settings', st);
     S = store.all();
-    if (patch && ('hotkeyMain' in patch || 'hotkeyNext' in patch || 'hotkeySearch' in patch)) registerShortcuts();
+    if (patch && ('hotkeyMain' in patch || 'hotkeyNext' in patch ||
+      'hotkeySearch' in patch || 'hotkeyCapture' in patch)) registerShortcuts();
     if (patch && 'autoLaunch' in patch) applyLoginItem();
     if (patch && 'theme' in patch) applyThemeToWindow();
     if (patch && 'matchTitles' in patch) sendEngineConfig();
@@ -1034,10 +1606,13 @@ function registerIpc() {
       file: file,
       hasFile: !!disk,
       draft: disk ? disk.draft : null,
+      question: disk ? disk.question : null,
       queueLen: disk && Array.isArray(disk.queue) ? disk.queue.length : 0,
       cleanup: disk && disk.settings ? disk.settings.cleanup : null,
       matchTitles: disk && disk.settings ? disk.settings.matchTitles : null,
       searchEngine: disk && disk.settings ? disk.settings.searchEngine : null,
+      ocrModel: disk && disk.settings ? disk.settings.ocrModel : null,
+      autoInputAfterSearch: disk && disk.settings ? disk.settings.autoInputAfterSearch : null,
       bankFile: bank.file,
       bankCount: items.length,
       bankFirst: items[0] ? { question: items[0].question, answer: items[0].answer } : null
@@ -1257,13 +1832,116 @@ function registerIpc() {
     return r;
   });
 
+  /* ---------------- 图片识别题目（框选截图） ---------------- */
+  ipcMain.handle('capture:start', () => startCapture());
+
+  ipcMain.on('capture:done', async (e, payload) => {
+    const rect = payload && payload.rect ? payload.rect : null;
+    const view = payload && payload.view ? payload.view : null;
+    const ctx = captureCtx;
+    closeCapture();
+    captureCtx = null;
+    if (!rect || !ctx) { restoreMain(); return; }
+    let img = null;
+    try {
+      img = cropSelection(ctx.full, rect, view, ctx.display);
+    } catch (err) {
+      toast('裁剪截图失败：' + (err && err.message ? err.message : String(err)), 'error');
+      restoreMain();
+      return;
+    }
+    restoreMain();
+    await recognizeAndFlow(img);
+  });
+
+  ipcMain.on('capture:cancel', () => {
+    closeCapture();
+    captureCtx = null;
+    restoreMain();
+  });
+
+  /* 用上一次的截图重新识别（例如刚换了模型想再试一次） */
+  ipcMain.handle('ocr:rerun', () => {
+    const p = (ocrState.image && ocrState.image.path) || '';
+    if (!p || !fs.existsSync(p)) {
+      toast('没有可重新识别的截图，请先按「截图选题」', 'warn');
+      return { ok: false, err: 'no-image' };
+    }
+    return runOcrOnFile(p, ocrState.image);
+  });
+
+  /* 测试视觉模型：拿内置示例题图真跑一次，能返回文字才算通 */
+  ipcMain.handle('ocr:test', async () => {
+    const sample = unpackAware(path.join(__dirname, '..', '..', 'assets', 'sample-question.png'));
+    if (!fs.existsSync(sample)) {
+      return { ok: false, err: '找不到内置示例题图 assets/sample-question.png，无法测试' };
+    }
+    const r = await ocrLib.recognize(sample, Object.assign({}, ocrOptions(), { engine: 'ai' }));
+    if (r.ok) {
+      toast('视觉模型可用：' + (r.model || '模型') + ' · ' + r.ms + 'ms · 识别 ' +
+        String(r.text || '').length + ' 字', 'ok');
+    } else {
+      toast('视觉模型测试失败：' + (r.err || '未知原因'), 'error');
+    }
+    return {
+      ok: !!r.ok, err: r.err || '', model: r.model || '', ms: r.ms || 0,
+      text: String(r.text || '').slice(0, 300), attempts: r.attempts || []
+    };
+  });
+
+  /* 检测系统 OCR 语言包 */
+  ipcMain.handle('ocr:langs', async () => {
+    const r = await ocrLib.listWinOcrLanguages(20000);
+    if (r.ok) {
+      toast(r.hasZh ? ('系统 OCR 可用：' + r.langs.join('、')) : '系统没有装中文 OCR 语言包',
+        r.hasZh ? 'ok' : 'warn');
+    } else {
+      toast('检测失败：' + r.err, 'error');
+    }
+    return r;
+  });
+
+  /* 手动修正识别结果：题目只由识别产生，但识别会出错，必须留一条修正通道 */
+  ipcMain.handle('question:set', (e, text) => {
+    const t = setQuestionText(text || '');
+    pushState();
+    return { ok: true, text: t };
+  });
+
+  /* 立即输入（跳过倒计时） */
+  ipcMain.handle('autoInput:now', () => {
+    if (!autoInput.active || !autoInput.text) {
+      toast('当前没有待输入的答案', 'warn');
+      return { ok: false, err: 'idle' };
+    }
+    if (autoInput.timer) { clearInterval(autoInput.timer); autoInput.timer = null; }
+    autoInput.active = false;
+    autoInput.remain = 0;
+    send('autoinput', publicAutoInput());
+    doAutoInput();
+    return { ok: true };
+  });
+
+  ipcMain.handle('autoInput:cancel', () => { autoInputCancel('手动取消'); return true; });
+
   ipcMain.handle('theme:apply', (e, mode) => { applyThemeToWindow(); return true; });
 }
 
 /* ---------------- 应用生命周期 ---------------- */
 app.on('second-instance', () => showMain());
-app.on('before-quit', () => { isQuitting = true; });
-app.on('will-quit', () => { globalShortcut.unregisterAll(); });
+app.on('before-quit', () => {
+  isQuitting = true;
+  if (autoInput.timer) { clearInterval(autoInput.timer); autoInput.timer = null; }
+  closeCapture();
+  /* 写盘是 160ms 合并延迟的，退出前必须强制落一次，
+     否则"刚识别完就关掉"这一次改动会直接丢掉 */
+  try { store.flush(); } catch (_) { /* 忽略 */ }
+  try { if (bank && typeof bank.flush === 'function') bank.flush(); } catch (_) { /* 忽略 */ }
+});
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  closeCapture();
+});
 app.on('window-all-closed', () => { if (isQuitting) app.quit(); });
 
 app.whenReady().then(() => {
@@ -1285,6 +1963,7 @@ app.whenReady().then(() => {
   if (process.env.SP_SHOT) runShots();
   if (process.env.SP_SMOKE) runSmoke();
   if (process.env.SP_SEARCHTEST) runSearchTest();
+  if (process.env.SP_CAPTURETEST) runCaptureTest();
 });
 
 /* ---------------- 自动化验证：交互级自检 ---------------- */
@@ -1323,6 +2002,8 @@ function seedShotData() {
     { at: Date.now() - 600000, text: demo[1] },
     { at: Date.now() - 1800000, text: demo[2] }
   ];
+  S.question = '已知 a+b=3，ab=2，则 a^2+b^2 的值为（　　）\nA. 3\nB. 4\nC. 5\nD. 6';
+  store.set('question', S.question);
   store.set('draft', S.draft);
   store.set('queue', S.queue);
   store.set('queueIndex', 0);
@@ -1347,34 +2028,32 @@ function runShots() {
     pushState();
     await delay(600);
     const modes = (process.env.SP_THEME ? [process.env.SP_THEME] : ['light', 'dark']);
-    /* search 视图需要先塞点演示数据进去，否则截到的只是一个空状态 */
+    /* 截图前先用演示数据把界面填满，否则截到的只是空状态 */
     const shots = [
-      { name: 'main-queue', view: 'queue', wait: 900 },
-      { name: 'main-history', view: 'history', wait: 700 },
-      { name: 'main-search', view: 'search', wait: 1000, preview: true },
-      { name: 'main-settings', view: 'settings', wait: 700 },
-      { name: 'modal-bank', view: 'search', wait: 900, preview: true, bankModal: true }
+      { name: 'main-queue', view: 'queue', wait: 900, ocr: true, search: true },
+      { name: 'main-history', view: 'history', wait: 700, ocr: true, search: true },
+      { name: 'main-search', view: 'search', wait: 1000, ocr: true, search: true },
+      { name: 'main-autoinput', view: 'search', wait: 900, ocr: true, search: true, autoInput: true },
+      { name: 'main-settings', view: 'settings', wait: 700, ocr: true, search: true },
+      { name: 'modal-bank', view: 'search', wait: 900, ocr: true, search: true, bankModal: true }
     ];
+    const exec = (code) => mainWin.webContents.executeJavaScript(code, true).catch(() => { /* 忽略 */ });
     for (const mode of modes) {
       const dir = mode === 'dark' ? path.join(outDir, 'dark') : outDir;
       fs.mkdirSync(dir, { recursive: true });
       for (const s of shots) {
-        if (s.preview) {
-          await mainWin.webContents.executeJavaScript(
-            'window.App && window.App.previewSearch && window.App.previewSearch(); true', true);
-        }
-        if (s.bankModal) {
-          await mainWin.webContents.executeJavaScript(
-            'window.App && window.App.openBank && window.App.openBank(); true', true);
-        }
-        await mainWin.webContents.executeJavaScript('window.__SP_SET_THEME__ && window.__SP_SET_THEME__(' + JSON.stringify(mode) + '); App.go(' + JSON.stringify(s.view) + '); true', true);
+        if (s.ocr) await exec('window.App && window.App.previewOcr && window.App.previewOcr(); true');
+        if (s.search) await exec('window.App && window.App.previewSearch && window.App.previewSearch(); true');
+        if (s.autoInput) await exec('window.App && window.App.previewAutoInput && window.App.previewAutoInput(5); true');
+        if (s.bankModal) await exec('window.App && window.App.openBank && window.App.openBank(); true');
+        await exec('window.__SP_SET_THEME__ && window.__SP_SET_THEME__(' + JSON.stringify(mode) + '); App.go(' + JSON.stringify(s.view) + '); true');
         await delay(s.wait);
         const img = await mainWin.webContents.capturePage();
         fs.writeFileSync(path.join(dir, s.name + '.png'), img.toPNG());
         logLine('SHOT ' + mode + '/' + s.name);
+        if (s.autoInput) await exec('window.App && window.App.cancelAutoInputPreview && window.App.cancelAutoInputPreview(); true');
         if (s.bankModal) {
-          await mainWin.webContents.executeJavaScript(
-            'window.App && window.App.closeBank && window.App.closeBank(); true', true);
+          await exec('window.App && window.App.closeBank && window.App.closeBank(); true');
           await delay(200);
         }
       }
@@ -1522,6 +2201,198 @@ async function runSearchTest() {
     out.fatal = e && e.stack ? String(e.stack) : String(e);
   }
   logLine('SEARCHTEST ' + JSON.stringify(out));
+  isQuitting = true;
+  setTimeout(() => app.quit(), 300);
+}
+
+/* ---------------- 自动化验证：真实框选截图链路（SP_CAPTURETEST） ----------------
+ * 自检脚本**测不了**这条链路 —— 截图会弹一个全屏遮罩，把测试窗口和所有断言一起遮掉。
+ * 所以单独开一个模式：自动起遮罩 → 用真实 IPC 回传一个选区（等价于替用户拖了一下框）
+ * → 走完整的「裁剪 → 放大 → OCR」→ 每一步结果写日志。
+ * 它会真的读取屏幕内容，因此日志只写 playground，**不要提交**。
+ */
+/**
+ * 跑一趟完整的「框选 → 裁剪 → 识别」。
+ * rect 为 null 表示整屏。返回本趟的关键事实，交给 runCaptureTest 汇总。
+ */
+async function captureTestPass(rect, keepPrefix) {
+  const p = { rect: rect };
+  const t0 = Date.now();
+
+  const started = await startCapture();
+  p.startOk = !!(started && started.ok);
+  p.startErr = (started && started.err) || '';
+  if (!p.startOk) throw new Error('截图没起来：' + p.startErr);
+
+  /* 遮罩期间主窗口必须藏起来，否则会被自己截进图里盖住学习通 */
+  p.mainHiddenDuringCapture = !(mainWin && mainWin.isVisible());
+  await delay(1200);   /* 等遮罩窗口加载完并真正显示出来 */
+
+  p.overlayAlive = !!(captureWin && !captureWin.isDestroyed());
+  if (!p.overlayAlive) throw new Error('截图遮罩窗口没建起来');
+  p.overlayWindowSize = captureWin.getSize();
+
+  if (!captureCtx) throw new Error('没有拿到整屏截图');
+  const b = captureCtx.display.bounds;
+  /* 关键：captureCtx 在收尾时会被置空，这里必须先快照引用，
+     否则后面的像素校验会拿到 null（曾经就因此静默失败过一次） */
+  const full = captureCtx.full;
+  p.fullImage = full.getSize();
+  p.displayBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
+
+  const view = await captureWin.webContents.executeJavaScript(
+    'JSON.stringify({ innerW: window.innerWidth, innerH: window.innerHeight,' +
+    ' bgW: (document.getElementById("bg")||{}).clientWidth,' +
+    ' bgH: (document.getElementById("bg")||{}).clientHeight })', true);
+  try { p.viewReported = JSON.parse(view); } catch (_) { p.viewReported = null; }
+  /* 底图必须是 1:1 的屏幕像素尺寸。对不上就说明窗口尺寸或 CSS 又把它拉伸了，
+     那"用户框的位置"和"实际裁到的内容"必然错位。 */
+  if (p.viewReported && p.viewReported.bgW) {
+    p.bgWidthMatchesScreen = Math.abs(p.viewReported.bgW - b.width) <= 2;
+    p.bgHeightMatchesScreen = Math.abs(p.viewReported.bgH - b.height) <= 2;
+  }
+
+  const want = rect || { x: 0, y: 0, w: b.width, h: b.height };
+
+  if (keepPrefix) {
+    try {
+      const shot = await captureWin.webContents.capturePage();
+      p.keptOverlay = keepPrefix + '-overlay.png';
+      fs.writeFileSync(p.keptOverlay, shot.toPNG());
+    } catch (e) { p.keepOverlayErr = String(e && e.message); }
+  }
+
+  /* 走真实 IPC 通路：等价于用户在这个位置拖出框并松手 */
+  await captureWin.webContents.executeJavaScript(
+    'window.cap.done({ rect: ' + JSON.stringify(want) +
+    ', view: { width: window.innerWidth, height: window.innerHeight } }); true', true);
+  p.ipcSent = true;
+
+  /* 等识别收尾 */
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    if (ocrState.at > t0 && !ocrState.active) break;
+    await delay(250);
+  }
+
+  p.ms = Date.now() - t0;
+  p.overlayClosed = !(captureWin && !captureWin.isDestroyed());
+  p.mainRestored = !!(mainWin && !mainWin.isDestroyed()) && mainWin.isVisible();
+  p.ocr = {
+    provider: ocrState.provider,
+    ms: ocrState.ms,
+    engineLabel: ocrState.engineLabel,
+    textLen: (ocrState.text || '').length,
+    text: (ocrState.text || '').slice(0, 240),
+    errors: ocrState.errors || []
+  };
+  p.image = ocrState.image;
+
+  /* 坐标映射的硬校验（比"看图像素猜"可靠得多）：
+     裁剪图的内容，必须逐字节等于整屏截图在换算位置（x*kx, y*ky）上的同一块内容。
+     DPI 换算、窗口尺寸、CSS 缩放任何一处错了，这里立刻不相等。
+
+     注意必须在"不放大"的前提下比对：一旦做了高质量插值放大，
+     放大图的每个像素都是邻近像素的混合值，逐字节比对必然失败（实测差几个色阶）。
+     放大是等比缩放，不改变裁剪区域，所以关掉放大来验坐标是等价且严格的。 */
+  try {
+    const kx = full.getSize().width / b.width;
+    const ky = full.getSize().height / b.height;
+    const N = 16;
+    const cp = full.crop({
+      x: Math.round(want.x * kx),
+      y: Math.round(want.y * ky),
+      width: N, height: N
+    }).toBitmap();
+    const cropPath = (ocrState.image && ocrState.image.path) || '';
+    if (!cropPath || !fs.existsSync(cropPath)) throw new Error('裁剪文件不存在：' + cropPath);
+    const up = nativeImage.createFromPath(cropPath)
+      .crop({ x: 0, y: 0, width: N, height: N }).toBitmap();
+    let diff = -1;
+    let same = cp.length === up.length && cp.length === N * N * 4;
+    if (same) {
+      for (let i = 0; i < cp.length; i++) {
+        if (cp[i] !== up[i]) { same = false; diff = i; break; }
+      }
+    }
+    p.cropPixelMatch = same;
+    p.cropPixelDiffAt = diff;
+    p.cropPixelSample = { screenPixel: Array.from(cp.slice(0, 4)), croppedPixel: Array.from(up.slice(0, 4)) };
+    /* 尺寸校验：裁剪图的像素尺寸应等于选区按 kx/ky 换算后的尺寸（放大倍数为 1 时） */
+    const isz = (ocrState.image && ocrState.image.width) ? ocrState.image : nativeImage.createFromPath(cropPath).getSize();
+    p.cropSize = { width: isz.width, height: isz.height };
+    p.cropSizeExpected = { width: Math.round(want.w * kx), height: Math.round(want.h * ky) };
+    p.cropSizeMatch = p.cropSize.width === p.cropSizeExpected.width &&
+      p.cropSize.height === p.cropSizeExpected.height;
+  } catch (e) {
+    p.cropPixelCheckErr = String((e && e.message) || e);
+  }
+
+  if (keepPrefix && ocrState.image && ocrState.image.path && fs.existsSync(ocrState.image.path)) {
+    try {
+      p.keptCrop = keepPrefix + '.png';
+      fs.copyFileSync(ocrState.image.path, p.keptCrop);
+    } catch (e) { p.keepCropErr = String(e && e.message); }
+  }
+  return p;
+}
+
+async function runCaptureTest() {
+  const out = { steps: [] };
+  const t0 = Date.now();
+  try {
+    await delay(1600);
+    /* 用系统 OCR 跑：这条链路的重点是"截图 → 裁剪 → 识别通路"本身，
+       不把外部模型服务扯进来，测试才可在离线环境复现 */
+    store.set('settings.ocrEngine', 'windows');
+    store.set('settings.ocrAutoSearch', false);
+    store.set('settings.autoInputAfterSearch', false);
+    /* 关掉放大：逐字节比对裁剪内容时，插值放大会让每个像素变成邻域混合值 */
+    store.set('settings.ocrUpscale', 1);
+    S = store.all();
+    store.flush();
+
+    if (mainWin && !mainWin.isDestroyed()) mainWin.show();
+    await delay(400);
+    out.mainVisibleBefore = !!(mainWin && mainWin.isVisible());
+
+    const keep = process.env.SP_CAPTURE_KEEP || '';
+
+    /* 第一趟：只框屏幕中间一块，专门验证"框哪裁哪"的坐标映射 */
+    const b0 = screen.getPrimaryDisplay().bounds;
+    const pass1 = await captureTestPass({
+      x: Math.round(b0.width * 0.15),
+      y: Math.round(b0.height * 0.18),
+      w: Math.round(b0.width * 0.50),
+      h: Math.round(b0.height * 0.30)
+    }, keep || '');
+    out.pass1 = pass1;
+
+    /* 第二趟仅在第一趟没识别出文字时才跑：
+       屏幕那一块当时可能本来就是纯色桌面，"没文字"是内容问题不是链路问题。
+       整屏一定包含任务栏文字，用它来证明 OCR 通路确实产出了文本。 */
+    out.pass2Ran = !pass1.ocr.textLen;
+    if (out.pass2Ran) {
+      out.pass2 = await captureTestPass(null, keep ? keep.replace(/\.png$/i, '-full') : '');
+    }
+
+    const ref = (out.pass2 && out.pass2.ocr && out.pass2.ocr.textLen) ? out.pass2 : pass1;
+    out.overlayClosed = ref.overlayClosed;
+    out.mainRestored = ref.mainRestored;
+    out.question = (S.question || '').slice(0, 240);
+    /* 写盘是合并延迟的，这里强制落一次再读，否则读到的永远是上一版内容 */
+    try { store.flush(); } catch (_) { /* 忽略 */ }
+    out.questionPersisted = (function () {
+      try {
+        const d = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'answer-data.json'), 'utf8'));
+        return typeof d.question === 'string' && d.question.length > 0;
+      } catch (e) { return false; }
+    })();
+  } catch (e) {
+    out.fatal = e && e.stack ? String(e.stack) : String(e);
+  }
+  out.elapsedMs = Date.now() - t0;
+  logLine('CAPTURETEST ' + JSON.stringify(out));
   isQuitting = true;
   setTimeout(() => app.quit(), 300);
 }

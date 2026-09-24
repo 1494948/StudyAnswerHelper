@@ -17,6 +17,9 @@
   const H = {
     state: null, fg: null,
     auto: { active: false, remain: 0, why: '' },
+    autoInput: { active: false, remain: 0, why: '', from: '', text: '', delaySec: 5 },
+    ocr: { active: false, at: 0, ms: 0, provider: '', engineLabel: '', attempts: [], errors: [], image: {}, warn: '' },
+    question: '',
     themePref: 'system', tab: 'queue',
     search: { active: false, candidates: [], errors: [], count: 0, ms: 0, question: '', engine: '', bankCount: 0, engines: {} }
   };
@@ -105,6 +108,8 @@
 
     $('kbdMain').textContent = st.hotkeys.main;
     $('kbdNext').textContent = st.hotkeys.next;
+    $('kbdSearch').textContent = st.hotkeys.search;
+    $('kbdCapture').textContent = st.hotkeys.capture;
     $('autoChk').checked = !!st.settings.autoMode;
     $('autoHint').textContent = '切到学习通窗口后自动倒计时输入（' + (st.settings.countdownSec || 3) + ' 秒，Esc 可取消）';
 
@@ -263,6 +268,98 @@
     renderSearchMeta();
   }
 
+  /* ---------------- 渲染：图片识别状态 ---------------- */
+  function renderOcr(st) {
+    const o = (st && st.ocr) || {};
+    H.ocr = Object.assign({}, H.ocr, o);
+
+    const bar = $('ocrBar');
+    const dot = $('ocrDot');
+    const label = $('ocrLabel');
+
+    if (H.ocr.active) {
+      bar.classList.add('busy');
+      dot.className = 'dot warn';
+      label.textContent = H.ocr.engine === 'windows'
+        ? '正在用系统 OCR 识别…'
+        : '正在识别题目…（调用视觉模型，通常 2~10 秒）';
+    } else {
+      bar.classList.remove('busy');
+      if (H.ocr.at && H.ocr.engineLabel) {
+        dot.className = 'dot ' + (H.ocr.warn ? 'warn' : 'ok');
+        label.textContent = H.ocr.engineLabel + ' · ' + (H.ocr.ms || 0) + 'ms';
+      } else if (H.ocr.errors && H.ocr.errors.length) {
+        dot.className = 'dot err';
+        label.textContent = '上次识别失败';
+      } else {
+        dot.className = 'dot';
+        label.textContent = '还没有识别过题目';
+      }
+    }
+
+    const img = H.ocr.image || {};
+    $('ocrStats').textContent = img.width ? (img.width + '×' + img.height) : '';
+
+    const warn = $('ocrWarn');
+    const msgs = [];
+    if (H.ocr.warn) msgs.push(H.ocr.warn);
+    if (!H.ocr.active && H.ocr.errors && H.ocr.errors.length) {
+      msgs.push('上次识别的问题：' + H.ocr.errors.join('；'));
+    }
+    warn.textContent = msgs.join('\n');
+    warn.hidden = !msgs.length;
+  }
+
+  /* ---------------- 渲染：自动输入倒计时 ---------------- */
+  function renderAutoInput(st) {
+    const a = (st && st.autoInput) || H.autoInput || {};
+    H.autoInput = Object.assign({}, H.autoInput, a);
+    const box = $('autoInputOverlay');
+    if (!H.autoInput.active) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    $('autoInputNum').textContent = String(H.autoInput.remain);
+    $('autoInputFrom').textContent = H.autoInput.why ? ('来源：' + H.autoInput.why) : '';
+    $('autoInputPreview').textContent = H.autoInput.text || '（空的）';
+  }
+
+  /* ---------------- 题目修正（识别错了才用；题目本身只由识别产生） ---------------- */
+  function startEditQuestion() {
+    const qb = $('questionBox');
+    if (!qb.value.trim()) { showToast('还没有识别出题目，先点「截图选题」', 'warn'); return; }
+    qb.readOnly = false;
+    qb.dataset.editing = '1';
+    $('ocrEditBtn').hidden = true;
+    $('ocrSaveEditBtn').hidden = false;
+    $('ocrCancelEditBtn').hidden = false;
+    qb.focus();
+    showToast('可以修改识别结果了，改完点「保存修改」', 'info');
+  }
+
+  function exitEditQuestion() {
+    const qb = $('questionBox');
+    qb.readOnly = true;
+    delete qb.dataset.editing;
+    $('ocrEditBtn').hidden = false;
+    $('ocrSaveEditBtn').hidden = true;
+    $('ocrCancelEditBtn').hidden = true;
+  }
+
+  async function saveEditQuestion() {
+    const qb = $('questionBox');
+    const r = await api.question.set(qb.value);
+    exitEditQuestion();
+    if (r && r.ok) showToast('题目已更新，可以点「重新搜答案」', 'ok');
+  }
+
+  function cancelEditQuestion() {
+    const qb = $('questionBox');
+    qb.value = H.question || '';
+    exitEditQuestion();
+  }
+
   /** 把一段文本写进大框（同时保持与主进程同步） */
   function setBoxValue(text) {
     const box = $('answerBox');
@@ -283,6 +380,12 @@
     fillSelect($('searchScoreSel'), st.labels.searchScore, String(s.searchMinScore));
     fillSelect($('searchTopSel'), st.labels.searchTop, String(s.searchTopN));
     fillSelect($('searchTimeoutSel'), { 8000: '8 秒', 20000: '20 秒', 40000: '40 秒' }, String(s.searchTimeoutMs));
+    /* 图片识别 */
+    fillSelect($('hotkeyCaptureSel'), arrToMap(st.presets.capture), s.hotkeyCapture);
+    fillSelect($('ocrEngineSel'), st.labels.ocrEngine, String(s.ocrEngine));
+    fillSelect($('ocrUpscaleSel'), st.labels.upscale, String(s.ocrUpscale));
+    fillSelect($('ocrTimeoutSel'), { 60000: '60 秒', 90000: '90 秒', 120000: '120 秒' }, String(s.ocrTimeoutMs));
+    fillSelect($('autoInputDelaySel'), st.labels.autoInputDelay, String(s.autoInputDelaySec));
 
     $('clearFirstChk').checked = !!s.clearFirst;
     $('refocusChk').checked = !!s.refocus;
@@ -290,23 +393,30 @@
     $('trayChk').checked = !!s.minimizeToTray;
     $('autoLaunchChk').checked = !!s.autoLaunch;
     $('searchAutoFillChk').checked = !!s.searchAutoFill;
+    $('ocrAutoSearchChk').checked = !!s.ocrAutoSearch;
+    $('autoInputChk').checked = !!s.autoInputAfterSearch;
 
     $('srcLocalChk').checked = !!s.searchLocal;
     $('srcWebChk').checked = !!s.searchWeb;
     $('srcAiChk').checked = !!s.searchAi;
 
-    const tInp = $('matchTitlesInp');
-    const pInp = $('matchProcsInp');
-    if (document.activeElement !== tInp) tInp.value = (s.matchTitles || []).join('，');
-    if (document.activeElement !== pInp) pInp.value = (s.matchProcs || []).join('，');
-
-    const bInp = $('aiBaseUrlInp');
-    const mInp = $('aiModelInp');
-    if (document.activeElement !== bInp) bInp.value = s.aiBaseUrl || '';
-    if (document.activeElement !== mInp) mInp.value = s.aiModel || '';
+    syncTextInput($('matchTitlesInp'), (s.matchTitles || []).join('，'), normList);
+    syncTextInput($('matchProcsInp'), (s.matchProcs || []).join('，'), normList);
+    syncTextInput($('aiBaseUrlInp'), s.aiBaseUrl || '');
+    syncTextInput($('aiModelInp'), s.aiModel || '');
     $('aiKeyState').textContent = s.aiKeySet
       ? ('密钥状态：' + (s.aiKeyHint || '已保存'))
       : '密钥状态：未保存。AI 解答需要填一个 OpenAI 兼容接口的密钥。';
+
+    /* 视觉模型配置 */
+    syncTextInput($('ocrModelInp'), s.ocrModel || '');
+    syncTextInput($('ocrFallbackInp'), s.ocrFallbackModel || '');
+    syncTextInput($('ocrBaseUrlInp'), s.ocrBaseUrl || '');
+    $('ocrKeyState').textContent = s.ocrKeySet
+      ? ('视觉密钥：' + (s.ocrKeyHint || '已保存'))
+      : (s.ocrKeyReuseAi
+        ? '视觉密钥：未单独设置，将复用「AI 解答」的密钥'
+        : '视觉密钥：未设置 —— 现在只能用系统自带 OCR，公式和上标会丢，搜题成功率很低');
 
     /* 搜索引擎冷却状态 */
     const eng = (st.search && st.search.engines) || {};
@@ -330,6 +440,24 @@
     (arr || []).forEach((x) => { m[x.id] = x.label; });
     return m;
   }
+
+  /* 文本输入框的"脏保护"。
+     不要用 document.activeElement 判断"用户是不是在编辑" —— 窗口没有系统焦点时
+     它恒为 false，于是主进程一推状态就把刚敲进去的内容清回旧值，静默丢输入。
+     （大框早期踩的就是这个坑，见 PROJECT.md 第 6.1 节第 9 条。）
+     脏的时候拒绝远端覆盖；等主进程的值追平输入内容后自动恢复同步。 */
+  function syncTextInput(el, value, norm) {
+    if (!el) return;
+    const n = norm || ((x) => String(x));
+    const v = String(value === undefined || value === null ? '' : value);
+    if (el.dataset.dirty === '1') {
+      if (n(el.value) === n(v)) el.dataset.dirty = '0';
+    } else if (el.value !== v) {
+      el.value = v;
+    }
+  }
+  /* 关键词这类用逗号分隔的输入，比较时按"项"归一化（全角半角、空格差异不算改动） */
+  const normList = (t) => String(t || '').split(/[,，\n]/).map((x) => x.trim()).filter(Boolean).join(',');
 
   /* ---------------- 渲染：倒计时 ---------------- */
   function renderAuto() {
@@ -390,17 +518,19 @@
       engine: s.engine, errors: s.errors || [], query: s.query,
       bankCount: s.bankCount, engines: s.engines || {}
     });
-    /* 主进程搜索时用的是它自己的题目，界面上没改过就跟着同步 */
+    /* 题目只由图片识别产生；正在手动修正时不要被状态推送覆盖 */
+    H.question = st.question || '';
     const qb = $('questionBox');
-    if (qb.dataset.dirty !== '1' && H.search.question && qb.value !== H.search.question) {
-      qb.value = H.search.question;
-    }
+    if (qb.dataset.editing !== '1' && qb.value !== H.question) qb.value = H.question;
+
     renderFg(st);
     renderComposer(st);
     renderQueue(st, false);
     renderHistory(st);
     renderSettings(st);
     renderAuto();
+    renderOcr(st);
+    renderAutoInput(st);
     renderSearchResults(false);
   }
 
@@ -462,28 +592,18 @@
       b.addEventListener('click', () => switchTab(b.getAttribute('data-tab')));
     });
 
-    /* 搜答案：题目框 */
+    /* 搜答案：截图选题 + 识别结果处理 */
     const qb = $('questionBox');
-    qb.addEventListener('input', () => { qb.dataset.dirty = '1'; });
-    $('qPasteBtn').addEventListener('click', async () => {
-      const t = (await api.clipboardRead()) || '';
-      if (!t.trim()) { showToast('剪贴板里没有文字', 'warn'); return; }
-      qb.value = t.trim();
-      qb.dataset.dirty = '1';
-      showToast('已读入题目（' + qb.value.length + ' 字）', 'ok');
+    $('captureBtn').addEventListener('click', async () => {
+      const r = await api.capture.start();
+      if (r && !r.ok && r.err && r.err !== 'busy') showToast('启动截图失败：' + r.err, 'error');
     });
-    $('qClearBtn').addEventListener('click', () => {
-      qb.value = '';
-      qb.dataset.dirty = '1';
-      qb.focus();
-    });
-    $('qUseDraftBtn').addEventListener('click', () => {
-      const t = box.value;
-      if (!t.trim()) { showToast('大框里还没有内容', 'warn'); return; }
-      qb.value = t;
-      qb.dataset.dirty = '1';
-      showToast('已把大框内容当作题目', 'ok');
-    });
+    $('ocrRerunBtn').addEventListener('click', () => { api.ocr.rerun(); });
+    $('ocrEditBtn').addEventListener('click', startEditQuestion);
+    $('ocrSaveEditBtn').addEventListener('click', saveEditQuestion);
+    $('ocrCancelEditBtn').addEventListener('click', cancelEditQuestion);
+    $('autoInputCancelBtn').addEventListener('click', () => api.autoInput.cancel());
+    $('autoInputNowBtn').addEventListener('click', () => api.autoInput.now());
 
     /* 搜答案：来源勾选（与设置同源，改一处两处都变） */
     const srcBind = [['srcLocalChk', 'searchLocal'], ['srcWebChk', 'searchWeb'], ['srcAiChk', 'searchAi']];
@@ -496,9 +616,8 @@
     });
 
     $('searchBtn').addEventListener('click', async () => {
-      qb.dataset.dirty = '0';
-      const r = await api.search.run({ question: qb.value });
-      if (r && !r.ok && r.err && r.err !== 'stale') { /* 主进程已经弹过提示，这里不重复 */ }
+      if (!qb.value.trim()) { showToast('还没有题目，先点「截图选题」', 'warn'); return; }
+      await api.search.run({ question: qb.value });
     });
     $('saveBankBtn').addEventListener('click', async () => {
       const r = await api.bank.add({ question: qb.value, answer: box.value });
@@ -688,14 +807,61 @@
     $('trayChk').addEventListener('change', (e) => setS({ minimizeToTray: e.target.checked }));
     $('autoLaunchChk').addEventListener('change', (e) => setS({ autoLaunch: e.target.checked }));
     $('searchAutoFillChk').addEventListener('change', (e) => setS({ searchAutoFill: e.target.checked }));
+    /* 图片识别与自动流程 */
+    $('ocrAutoSearchChk').addEventListener('change', (e) => setS({ ocrAutoSearch: e.target.checked }));
+    $('autoInputChk').addEventListener('change', (e) => setS({ autoInputAfterSearch: e.target.checked }));
+    $('hotkeyCaptureSel').addEventListener('change', (e) => setS({ hotkeyCapture: e.target.value }));
+    $('ocrEngineSel').addEventListener('change', (e) => setS({ ocrEngine: e.target.value }));
+    $('ocrUpscaleSel').addEventListener('change', (e) => setS({ ocrUpscale: parseInt(e.target.value, 10) }));
+    $('ocrTimeoutSel').addEventListener('change', (e) => setS({ ocrTimeoutMs: parseInt(e.target.value, 10) }));
+    $('autoInputDelaySel').addEventListener('change', (e) => setS({ autoInputDelaySec: parseInt(e.target.value, 10) }));
+
+    /* 文本类配置统一走"先打脏标记、再保存"：
+       窗口没获得系统焦点时 document.activeElement 不可靠，
+       不打脏的话主进程一推状态就会把正在输入的内容盖回去。
+       注意：$ 是 getElementById，不认 '#' 前缀，所以这里两种写法都兼容。 */
+    const onTextChange = (sel, key) => {
+      const el = String(sel).charAt(0) === '#' ? document.querySelector(sel) : $(sel);
+      if (!el) { console.error('onTextChange 找不到元素：' + sel); return; }
+      el.addEventListener('change', (e) => {
+        e.target.dataset.dirty = '1';
+        const patch = {};
+        patch[key] = e.target.value.trim();
+        setS(patch);
+      });
+    };
+    onTextChange('#ocrModelInp', 'ocrModel');
+    onTextChange('#ocrFallbackInp', 'ocrFallbackModel');
+    onTextChange('#ocrBaseUrlInp', 'ocrBaseUrl');
+    $('ocrSaveKeyBtn').addEventListener('click', async () => {
+      const v = $('ocrKeyInp').value.trim();
+      if (!v) { showToast('请先在输入框里粘贴视觉模型的 API Key', 'warn'); return; }
+      await api.setSettings({ ocrApiKey: v });
+      $('ocrKeyInp').value = '';
+      showToast('视觉密钥已保存', 'ok');
+      applyState(await api.getState());
+    });
+    $('ocrClearKeyBtn').addEventListener('click', async () => {
+      if (!window.confirm('确定要清除已保存的视觉密钥吗？（清除后会退回系统自带 OCR）')) return;
+      await api.setSettings({ ocrApiKey: '' });
+      $('ocrKeyInp').value = '';
+      showToast('已清除视觉密钥', 'warn');
+      applyState(await api.getState());
+    });
+    $('ocrTestBtn').addEventListener('click', async () => {
+      showToast('正在用内置示例题图测试视觉模型…');
+      const r = await api.ocr.test();
+      if (r && r.ok) showToast('视觉模型可用：' + (r.model || '') + ' · ' + r.ms + 'ms', 'ok');
+    });
+    $('ocrLangsBtn').addEventListener('click', () => { api.ocr.langs(); });
 
     const saveKeywords = debounce(() => {
       const t = $('matchTitlesInp').value.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
       const p = $('matchProcsInp').value.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
       setS({ matchTitles: t, matchProcs: p });
     }, 600);
-    $('matchTitlesInp').addEventListener('input', saveKeywords);
-    $('matchProcsInp').addEventListener('input', saveKeywords);
+    $('matchTitlesInp').addEventListener('input', (e) => { e.target.dataset.dirty = '1'; saveKeywords(); });
+    $('matchProcsInp').addEventListener('input', (e) => { e.target.dataset.dirty = '1'; saveKeywords(); });
 
     $('restartEngineBtn').addEventListener('click', async () => {
       await api.restartEngine();
@@ -703,9 +869,9 @@
     });
     $('openDataBtn').addEventListener('click', () => api.openDataDir());
 
-    /* AI 配置：用 change（失焦/回车才触发），避免边打字边被状态推送覆盖 */
-    $('aiBaseUrlInp').addEventListener('change', (e) => setS({ aiBaseUrl: e.target.value.trim() }));
-    $('aiModelInp').addEventListener('change', (e) => setS({ aiModel: e.target.value.trim() }));
+    /* AI 解答配置：同样走脏标记 + change（失焦/回车才触发） */
+    onTextChange('#aiBaseUrlInp', 'aiBaseUrl');
+    onTextChange('#aiModelInp', 'aiModel');
     $('aiSaveKeyBtn').addEventListener('click', async () => {
       const v = $('aiKeyInp').value.trim();
       if (!v) { showToast('请先在输入框里粘贴 API Key', 'warn'); return; }
@@ -731,10 +897,11 @@
       if (!r || !r.ok) showToast('测试失败：' + ((r && r.err) || '未知原因'), 'error');
     });
 
-    /* 键盘：Esc 关闭弹窗/取消倒计时；Ctrl+Enter 立即输入 */
+    /* 键盘：Esc 关闭弹窗 / 取消倒计时；Ctrl+Enter 立即输入 */
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         if (bankOpen()) { closeBank(); return; }
+        if (H.autoInput.active) { api.autoInput.cancel(); return; }
         if (H.auto.active) { api.autoCancel(); return; }
       }
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && e.target === box) {
@@ -768,6 +935,26 @@
     renderSearchResults(true);
     renderSearchMeta();
   });
+  api.onOcr((d) => {
+    if (!d) return;
+    H.ocr = Object.assign({}, H.ocr, d);
+    if (d.text !== undefined) {
+      H.question = String(d.text || '');
+      const qb = $('questionBox');
+      if (qb.dataset.editing !== '1') qb.value = H.question;
+    }
+    if (d.active) switchTab('search');      /* 截图识别时把识别页翻出来 */
+    renderOcr({});
+  });
+  api.onQuestion((text) => {
+    H.question = String(text || '');
+    const qb = $('questionBox');
+    if (qb.dataset.editing !== '1') qb.value = H.question;
+  });
+  api.onAutoInput((d) => {
+    H.autoInput = Object.assign({}, H.autoInput, d || {});
+    renderAutoInput(null);
+  });
 
   /* 供自动化脚本与视觉走查使用 */
   window.App = {
@@ -794,10 +981,53 @@
           { id: 'w1', source: 'web', kind: 'clue', score: 0.78, engine: '搜狗', title: '中考真题：已知a+b=3,ab=2,求a²+b²值是多少？_腾讯视频', snippet: '视频讲解：先求 (a+b)² = a²+2ab+b²，再代入求值。', url: 'https://v.qq.com/x/page/o3321nwr92m.html' }
         ]
       };
-      $('questionBox').value = H.search.question;
+      /* 题目由 H.question / 识别结果维护，这里不去动题目框，
+         否则截图时会把「图片识别」得到的题目覆盖掉 */
+      H.question = H.question || H.search.question;
       renderSearchResults(true);
       renderSearchMeta();
-    }
+    },
+    /** 塞一组演示识别结果（仅用于截图与命中测试，不走真实截图/联网） */
+    previewOcr: function (provider) {
+      const isAi = provider !== 'windows';
+      H.ocr = {
+        active: false,
+        at: Date.now(),
+        ms: isAi ? 4260 : 1380,
+        provider: isAi ? 'ai' : 'windows',
+        usedModel: isAi ? 'glm-4v-flash' : '',
+        engineLabel: isAi ? 'AI 视觉 · glm-4v-flash' : '系统自带 OCR（离线，公式会丢）',
+        attempts: [{ provider: isAi ? 'ai' : 'windows', ok: true, err: '', ms: isAi ? 4260 : 1380 }],
+        errors: [],
+        image: { width: 1240, height: 372 },
+        warn: isAi ? '' : '系统自带 OCR 会丢上标和公式（a² 可能变 a2），搜题成功率低，建议配一个视觉模型',
+        hasAiKey: isAi,
+        usingAiKey: false,
+        engine: 'auto',
+        model: 'glm-4v-flash',
+        fallbackModel: 'deepseek-v4-flash'
+      };
+      H.question = isAi
+        ? '已知 a+b=3，ab=2，则 a^2+b^2 的值为（　　）\nA. 3\nB. 4\nC. 5\nD. 6'
+        : '例题（选择题）已知 a+b=3, ab=2, 则 a2+b2 的值为（） C. 5 D. 6';
+      $('questionBox').value = H.question;
+      renderOcr({});
+    },
+    /** 塞一个演示中的自动输入倒计时 */
+    previewAutoInput: function (sec) {
+      H.autoInput = {
+        active: true, remain: sec || 5,
+        /* 本地题库的答案是自己录的，不该标"疑似"；疑似标签只给网络抽取出来的答案 */
+        why: '本地题库', from: 'local',
+        text: 'a²+b²=(a+b)²−2ab=3²−2×2=9−4=5', delaySec: sec || 5
+      };
+      renderAutoInput(null);
+    },
+    cancelAutoInputPreview: function () {
+      H.autoInput = { active: false, remain: 0, why: '', from: '', text: '', delaySec: 5 };
+      renderAutoInput(null);
+    },
+    captureStart: () => api.capture.start()
   };
   window.__SP_SET_THEME__ = (mode) => setTheme(mode, false);
 
