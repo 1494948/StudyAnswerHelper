@@ -218,3 +218,5 @@ SP_SEARCHTEST  本地题库命中 1.000 并自动填入大框；搜狗 9 条线�
 | 2026-09-24 | 修正相似度算法的危险误判 | 只差一个运算符的题目（`a+b=3` vs `a-b=3`）原被判为 0.92 高相似，会串题。引入运算符特征 + `criticalMinorDiff()` 硬否决规则，实测降到 0.3。加了 8 条回归用例 |
 | 2026-09-24 | 修正 `SP_SHOT` 会把用户真实答案截进公开截图 | 改为 `seedShotData()` 现造演示数据；所有测试模式启动时清空数据文件，保证自检可复现 |
 | 2026-09-24 | 打包并归档 v1.1.0 | 输出目录 `dist-installer-v4`，构建退出码 0（未触发删除钩子）。产物归档到 `releases\StudyAnswerHelper\v1.1.0\`（MD5 与构建目录逐一比对一致）。开发态与两个打包产物各自跑过 SP_SELFTEST 32/0、SP_SMOKE 5/0、SP_SEARCHTEST 通过 |
+| 2026-09-24 | 清理垃圾文件（经用户确认，工作台 1.06 GB → 666.0 MB） | 释放 418 MB：① `cleanup.py --clean --aggressive` 清掉 Claw/ 与 v1~v4 的旧构建输出，释放 266.8 MB；② 手工删除 dist-installer-v4 下与 v1.1.0 归档 MD5 完全一致的 2 个 exe 副本 + 构建元数据，以及项目内 `release/` 下与 v1.0.0 归档 MD5 一致的 2 个旧 txt，释放 150.7 MB。**残留 4 个 `dist-installer-v*/win-unpacked` 空壳（含被进程占用的 app.asar，错误码 32）删不掉，重启后重跑 `cleanup.py` 即可** |
+| 2026-09-24 | 推送 v1.1.0 到 GitHub | 先 `ls-remote` 探明远端 main 停在 `3348149`（本地领先 3 个提交，可快进，未强推）。推送 `main`（`3348149..3ca2260`）+ 注解标签 `v1.1.0`，实测无认证弹窗。推后核验：远端 `refs/heads/main` == 本地 HEAD == `3ca2260`，`refs/tags/v1.1.0^{}` == `3ca2260`，`git status -sb` 显示正常 upstream。仓库体积 527 KiB / 37 个跟踪文件（exe 未进仓库，走 Releases 附件） |
