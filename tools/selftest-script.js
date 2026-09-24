@@ -1,6 +1,10 @@
 /* 渲染进程交互级自检脚本（由主进程 executeJavaScript 注入执行）
    覆盖：视图渲染、真实点击命中（elementFromPoint）、真实点击翻转、
-         表单落盘（内存 → 磁盘）、默认隐藏态、主题、布局、滚动可达性 */
+         表单落盘（内存 → 磁盘）、默认隐藏态、主题、布局、滚动可达性、
+         搜答案（本地题库离线闭环）、题库弹窗、密钥不外泄
+
+   设计约束：**必须离线可复现**。所有联网路径都显式关掉（sources.web = false），
+   真实网络检索由独立的 SP_SEARCHTEST 模式验证。 */
 (async () => {
   const out = { pass: [], fail: [], info: {} };
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,13 +60,25 @@
     return top.tagName + '.' + String(top.className || '').split(' ')[0];
   }
 
+  /* 轮询等待某个异步条件成立（本机后台节流会让"等固定毫秒"的断言假失败） */
+  async function until(fn, ms, label) {
+    const deadline = Date.now() + (ms || 4000);
+    let last = null;
+    while (Date.now() < deadline) {
+      last = await fn();
+      if (last) return last;
+      await wait(200);
+    }
+    throw new Error('等待超时：' + (label || '条件未满足') + '（最后一次=' + JSON.stringify(last) + '）');
+  }
+
   const lum = (c) => {
     const m = String(c).match(/\d+/g) || [0, 0, 0];
     return (Number(m[0]) + Number(m[1]) + Number(m[2])) / 3;
   };
 
-  /* 1. 三个标签页都能渲染出真实内容（不是空白面板） */
-  for (const tab of ['queue', 'history', 'settings']) {
+  /* 1. 四个标签页都能渲染出真实内容（不是空白面板） */
+  for (const tab of ['queue', 'search', 'history', 'settings']) {
     await step('视图渲染 ' + tab, async () => {
       window.App.go(tab);
       await wait(220);
@@ -88,15 +104,23 @@
     await wait(240);
     return await hitTest(['#answerBox', '#insertBtn', '#nextBtn', '#cleanupSel', '#pasteBtn', '#clearBtn', '#autoSwitch', '#autoChk']);
   });
-  await step('命中测试：答案队列面板', async () => {
+  await step('命中测试：标签页与队列面板', async () => {
     window.App.go('queue');
     await wait(240);
-    return await hitTest(['#queueAddBtn', '.tab[data-tab="history"]', '.tab[data-tab="settings"]', '#themeSel']);
+    return await hitTest(['#queueAddBtn', '.tab[data-tab="search"]', '.tab[data-tab="history"]', '.tab[data-tab="settings"]', '#themeSel']);
+  });
+  await step('命中测试：搜答案面板', async () => {
+    window.App.go('search');
+    await wait(260);
+    return await hitTest(['#questionBox', '#searchBtn', '#qPasteBtn', '#qClearBtn', '#qUseDraftBtn',
+      '#srcLocalChk', '#srcWebChk', '#srcAiChk', '#saveBankBtn', '#bankManageBtn', '#kbdSearch']);
   });
   await step('命中测试：设置面板', async () => {
     window.App.go('settings');
     await wait(260);
-    return await hitTest(['#hotkeyMainSel', '#countdownSel', '#matchTitlesInp', '#addMatchBtn2', '#restartEngineBtn', '#openDataBtn', '#autoLaunchChk', '#trayChk']);
+    return await hitTest(['#hotkeyMainSel', '#countdownSel', '#searchEngineSel', '#searchScoreSel',
+      '#hotkeySearchSel', '#searchAutoFillChk', '#aiBaseUrlInp', '#aiModelInp', '#aiKeyInp',
+      '#aiSaveKeyBtn', '#aiTestBtn', '#addMatchBtn2', '#restartEngineBtn', '#openDataBtn', '#autoLaunchChk', '#trayChk']);
   });
 
   /* 3. 开关能被"真的点击"并且状态确实翻转 */
@@ -115,6 +139,26 @@
     return '命中层 ' + where + '，' + before + ' → ' + after + ' → 还原';
   });
 
+  /* 3b. 搜答案的来源勾选也是普通开关，点击后要真的写进设置 */
+  await step('来源勾选真实点击可生效', async () => {
+    window.App.go('search');
+    await wait(240);
+    const chk = q('#srcWebChk');
+    const before = chk.checked;
+    await clickCenter('#srcWebChk');
+    const st = await until(async () => {
+      const s = await window.sp.getState();
+      return s.settings.searchWeb !== before ? s : null;
+    }, 3000, '来源勾选写入设置');
+    assert(st.settings.searchWeb !== before, '勾选没有写进设置');
+    await clickCenter('#srcWebChk');         /* 还原 */
+    await until(async () => {
+      const s = await window.sp.getState();
+      return s.settings.searchWeb === before ? s : null;
+    }, 3000, '来源勾选还原');
+    return before + ' → ' + st.settings.searchWeb + ' → 还原';
+  });
+
   /* 4. 小窗口下设置页必须能滚动，否则末尾的开关够不到 */
   await step('设置面板内容超出时可滚动', async () => {
     window.App.go('settings');
@@ -127,15 +171,17 @@
     return 'overflow-y=' + ov + '，末尾开关可达';
   });
 
-  /* 5. 默认隐藏态：倒计时浮层不能常驻 */
+  /* 5. 默认隐藏态：倒计时浮层、题库弹窗不能常驻 */
   await step('默认隐藏态', async () => {
     const cd = q('#countdown');
     assert(cd, '找不到倒计时层');
     assert(getComputedStyle(cd).display === 'none', '倒计时层默认没有隐藏（会挡住下方按钮）');
     const toasts = q('.toasts');
     assert(getComputedStyle(toasts).pointerEvents === 'none', '提示层会拦截点击');
-    /* "加入识别名单"的显隐取决于当前有没有读到"未命中的前台窗口"：
-       读到了就该显示（好让用户点一下加进名单），没读到才该隐藏 */
+    const modal = q('#bankModal');
+    assert(modal, '找不到题库弹窗');
+    assert(getComputedStyle(modal).display === 'none', '题库弹窗默认没有隐藏（[hidden] 被 display:flex 覆盖了）');
+    /* "加入识别名单"的显隐取决于当前有没有读到"未命中的前台窗口" */
     const addBtn = q('#addMatchBtn');
     const st = window.App.state() || {};
     const f = st.fg || {};
@@ -143,7 +189,7 @@
     if (f.matched) assert(addBtn.hidden === true, '已识别为学习通时不该再显示"加入识别名单"');
     else if (hasFg) assert(addBtn.hidden === false, '读到了未命中的前台窗口，就该显示"加入识别名单"');
     else assert(addBtn.hidden !== false, '没读到前台窗口时应隐藏"加入识别名单"');
-    return '倒计时隐藏 / 提示层不拦点击 / 识别按钮显隐正确（fg=' + (f.proc || '无') + '）';
+    return '倒计时/题库弹窗隐藏 / 提示层不拦点击 / 识别按钮显隐正确（fg=' + (f.proc || '无') + '）';
   });
 
   /* 6. 大框内容落盘（内存 + 主进程） */
@@ -160,26 +206,17 @@
     return 'draft=' + st.draft;
   });
 
-  /* 7. 真的写到磁盘上了吗
-        注意：窗口被其他程序挡住时，Chromium 会把渲染进程的定时器降频到约 1 秒，
-        于是"输入 → 渲染层防抖 320ms → 主进程落盘 160ms"整条链路会明显变慢。
-        所以这里改成轮询等待（最多 4 秒），断言"最终一定会落盘"，而不是盯着某个瞬间。 */
+  /* 7. 真的写到磁盘上了吗（轮询等待，不盯瞬间） */
   await step('草稿已写入磁盘文件', async () => {
-    let p = null;
-    const deadline = Date.now() + 4000;
-    while (Date.now() < deadline) {
-      p = await window.sp.probe();
-      if (p.hasFile && p.draft === '测试内容 √3 + 1/2') break;
-      await wait(250);
-    }
+    const p = await until(async () => {
+      const x = await window.sp.probe();
+      return (x.hasFile && x.draft === '测试内容 √3 + 1/2') ? x : null;
+    }, 5000, '草稿落盘');
     out.info.probe = p;
-    assert(p.hasFile, '数据文件不存在：' + p.file);
-    assert(p.draft === '测试内容 √3 + 1/2', '等待 4 秒后磁盘里的草稿仍不对：' + JSON.stringify(p.draft));
     return 'file=' + p.file;
   });
 
-  /* 7b. 回归：窗口没获得系统焦点时，主进程推状态不能把还没落盘的编辑清掉
-         （真实触发条件就是"前台窗口一变，引擎上报 → 主进程 pushState"） */
+  /* 7b. 回归：窗口没获得系统焦点时，主进程推状态不能把还没落盘的编辑清掉 */
   await step('状态推送不会清空未落盘的编辑', async () => {
     window.App.go('queue');
     await wait(200);
@@ -213,23 +250,36 @@
     return '队列 ' + st.queue.length + ' 条，mode=' + st.queueMode;
   });
 
-  /* 9. 设置项生效 */
-  await step('设置项：清理级别 / 逐字间隔 / 热键', async () => {
+  /* 9. 设置项生效（含新增的搜答案设置） */
+  await step('设置项：输入 / 搜答案 / 热键', async () => {
     window.App.go('settings');
     await wait(220);
-    const cs = q('#cleanupSel');
-    cs.value = 'medium';
-    cs.dispatchEvent(new Event('change', { bubbles: true }));
-    await wait(420);
-    const ds = q('#delaySel2');
-    ds.value = '30';
-    ds.dispatchEvent(new Event('change', { bubbles: true }));
-    await wait(420);
+    const setVal = async (sel, value) => {
+      const el = q(sel);
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(380);
+    };
+    await setVal('#cleanupSel', 'medium');
+    await setVal('#delaySel2', '30');
+    await setVal('#searchEngineSel', 'so360');
+    await setVal('#searchScoreSel', '0.65');
+    await setVal('#searchTopSel', '10');
+    await setVal('#hotkeySearchSel', 'c-alt-q');
     const st = await window.sp.getState();
-    assert(st.settings.cleanup === 'medium', '清理级别未生效：' + st.settings.cleanup);
-    assert(st.settings.charDelayMs === 30, '逐字间隔未生效：' + st.settings.charDelayMs);
-    assert(st.settings.hotkeyMain, '热键预设缺失');
-    return 'cleanup=' + st.settings.cleanup + ' delay=' + st.settings.charDelayMs + ' hotkey=' + st.hotkeys.main;
+    const s = st.settings;
+    assert(s.cleanup === 'medium', '清理级别未生效：' + s.cleanup);
+    assert(s.charDelayMs === 30, '逐字间隔未生效：' + s.charDelayMs);
+    assert(s.searchEngine === 'so360', '搜索引擎未生效：' + s.searchEngine);
+    assert(s.searchMinScore === 0.65, '命中阈值未生效：' + s.searchMinScore);
+    assert(s.searchTopN === 10, '候选条数未生效：' + s.searchTopN);
+    assert(s.hotkeySearch === 'c-alt-q', '搜题热键未生效：' + s.hotkeySearch);
+    assert(st.hotkeys.search && st.hotkeys.search.indexOf('Ctrl') === 0, '搜题热键标签异常：' + st.hotkeys.search);
+    assert(st.labels.searchEngine && Object.keys(st.labels.searchEngine).length === 4, '搜索引擎选项标签缺失');
+    /* 还原成默认值，避免影响后面的检索断言 */
+    await window.sp.setSettings({ searchEngine: 'auto', searchMinScore: 0.55, searchTopN: 6, hotkeySearch: 'c-alt-f' });
+    await wait(150);
+    return 'cleanup=' + s.cleanup + ' delay=' + s.charDelayMs + ' engine=' + s.searchEngine + ' topN=' + s.searchTopN;
   });
 
   /* 10. 窗口识别名单编辑 */
@@ -241,6 +291,157 @@
     const st = await window.sp.getState();
     assert(st.settings.matchTitles.join(',') === '学习通,超星,我的测试窗口', '标题关键词没保存：' + JSON.stringify(st.settings.matchTitles));
     return st.settings.matchTitles.length + ' 个标题关键词';
+  });
+
+  /* ============ 搜答案（全离线） ============ */
+
+  const Q1 = '已知a+b=3，ab=2，则a²+b²的值为（ ）';
+
+  await step('题库：新增 / 去重合并 / 模糊匹配阈值', async () => {
+    const a = await window.sp.bank.add({ question: Q1, answer: '(a+b)²-2ab=9-4=5' });
+    assert(a && a.ok, '新增失败：' + JSON.stringify(a));
+    assert(a.updated === false, '首次新增不该是"更新"');
+    /* 同一道题换个标点写法应当合并成一条，而不是新增 */
+    const b = await window.sp.bank.add({ question: '已知a+b=3,ab=2,则a²+b²的值为()', answer: '5' });
+    assert(b && b.ok && b.updated === true, '重复题目没有合并：' + JSON.stringify(b));
+    assert(b.id === a.id, '合并后 id 变了，说明是新增而不是合并');
+    const list = await window.sp.bank.list('', 500);
+    assert(list.count === 1, '合并后条数应为 1，实际 ' + list.count);
+    return '合并为 1 条，答案=' + list.items[0].answer;
+  });
+
+  await step('搜答案：本地题库命中 → 结果渲染 → 一键填入大框', async () => {
+    window.App.go('search');
+    await wait(240);
+    const qb = q('#questionBox');
+    qb.value = Q1;
+    qb.dispatchEvent(new Event('input', { bubbles: true }));
+    const r = await window.sp.search.run({ question: Q1, sources: { local: true, web: false, ai: false } });
+    assert(r && r.ok, '检索失败：' + JSON.stringify(r && r.err));
+    assert(r.candidates.length >= 1, '本地题库没有命中（候选 0 条）');
+    assert(r.candidates[0].source === 'local', '头名不是本地题库：' + r.candidates[0].source);
+    assert(r.candidates[0].score === 1, '命中的相似度应为 1，实际 ' + r.candidates[0].score);
+    assert(r.candidates[0].answer === '5', '答案不对：' + r.candidates[0].answer);
+
+    /* 结果必须真的渲染到界面上（不是只躺在内存里） */
+    const rendered = await until(async () => {
+      const n = document.querySelectorAll('#searchResult .ritem').length;
+      return n >= 1 ? n : null;
+    }, 4000, '结果列表渲染');
+    assert(q('#searchResult').textContent.indexOf('本地题库') >= 0, '结果里没有来源标签');
+
+    /* 走"真实点击"填入大框 */
+    await clickCenter('#searchResult button[data-act="fill"]');
+    const got = await until(async () => (q('#answerBox').value === '5' ? '5' : null), 3000, '填入大框');
+    assert(got === '5', '填入大框失败，实际=' + JSON.stringify(q('#answerBox').value));
+    return r.candidates.length + ' 条候选 / 渲染 ' + rendered + ' 行 / 填入大框=' + got;
+  });
+
+  await step('搜答案：题库落盘并生效', async () => {
+    const p = await until(async () => {
+      const x = await window.sp.probe();
+      return x.bankCount === 1 ? x : null;
+    }, 5000, '题库落盘');
+    assert(p.bankFirst && p.bankFirst.answer === '5', '题库文件里的答案不对：' + JSON.stringify(p.bankFirst));
+    return 'bankFile=' + p.bankFile + ' / 1 条';
+  });
+
+  await step('搜答案：题目框不被状态推送清空', async () => {
+    window.App.go('search');
+    await wait(200);
+    const qb = q('#questionBox');
+    const text = '这是一道不能被状态推送清掉的题目 ' + Date.now();
+    qb.value = text;
+    qb.dispatchEvent(new Event('input', { bubbles: true }));
+    for (let i = 0; i < 3; i++) {
+      await window.sp.setSettings({ searchTopN: 6 });
+      await wait(60);
+    }
+    await wait(600);
+    assert(qb.value === text, '题目框被状态推送覆盖了：' + qb.value);
+    return '题目保住了';
+  });
+
+  await step('搜答案：没勾来源 / 空题目 都有明确提示', async () => {
+    const r1 = await window.sp.search.run({ question: '随便一道题', sources: { local: false, web: false, ai: false } });
+    assert(r1 && r1.ok === false && r1.err.indexOf('来源') >= 0, '没勾来源时应明确提示：' + JSON.stringify(r1 && r1.err));
+    const r2 = await window.sp.search.run({ question: '   ', sources: { local: true, web: false, ai: false } });
+    assert(r2 && r2.ok === false, '空题目应返回失败');
+    return '两条错误路径均有提示';
+  });
+
+  await step('搜答案：AI 未配密钥时优雅降级（不抛错）', async () => {
+    const r = await window.sp.search.run({ question: '1+1=?', sources: { local: false, web: false, ai: true } });
+    assert(r && r.ok === true, '应返回 ok 而不是抛异常');
+    assert(r.candidates.length === 0, '没有密钥不该产出 AI 候选');
+    assert(r.errors.length >= 1 && r.errors[0].indexOf('密钥') >= 0, '缺少密钥提示：' + JSON.stringify(r.errors));
+    return r.errors[0];
+  });
+
+  await step('题库弹窗：打开 / 渲染 / 批量导入 / 删除 / 关闭', async () => {
+    window.App.go('search');
+    await wait(200);
+    await clickCenter('#bankManageBtn');
+    await wait(500);
+    const modal = q('#bankModal');
+    assert(getComputedStyle(modal).display !== 'none', '题库弹窗没打开');
+    assert(q('#bankList').children.length >= 1, '题库列表没有内容');
+
+    /* 弹窗里的关键控件都要真的能点到 */
+    await hitTest(['#bankBulk', '#bankImportBtn', '#bankImportFileBtn', '#bankExportBtn',
+      '#bankClearBtn', '#bankSearchInp', '#bankCloseBtn', '#bankList']);
+
+    const bulk = q('#bankBulk');
+    bulk.value = '三角形内角和是多少度 || 180°\n某商品原价200元打8折 || 160元\n这一行故意没有分隔符';
+    bulk.dispatchEvent(new Event('input', { bubbles: true }));
+    await clickCenter('#bankImportBtn');
+    const after = await until(async () => {
+      const r = await window.sp.bank.list('', 500);
+      return r.count === 3 ? r : null;
+    }, 4000, '批量导入生效');
+    assert(after.count === 3, '导入后条数应为 3，实际 ' + after.count);
+    assert(bulk.value === '', '导入后输入框应被清空');
+
+    /* 筛选 */
+    const f = q('#bankSearchInp');
+    f.value = '三角形';
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    const filtered = await until(async () => {
+      const n = q('#bankList').querySelectorAll('.bank-item').length;
+      return n === 1 ? n : null;
+    }, 3000, '筛选生效');
+    assert(filtered === 1, '筛选应剩 1 条');
+    f.value = '';
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    await wait(500);
+
+    /* 真实点击删除一条 */
+    await clickCenter('#bankList button[data-act="del"]');
+    const afterDel = await until(async () => {
+      const r = await window.sp.bank.list('', 500);
+      return r.count === 2 ? r : null;
+    }, 4000, '删除生效');
+
+    await clickCenter('#bankCloseBtn');
+    await wait(300);
+    assert(getComputedStyle(modal).display === 'none', '题库弹窗没有关掉');
+    return '导入到 3 条 → 筛选 1 条 → 删除后 ' + afterDel.count + ' 条 → 已关闭';
+  });
+
+  await step('安全：API Key 不会出主进程', async () => {
+    await window.sp.setSettings({ aiApiKey: 'sk-selftest-secret-1234' });
+    await wait(300);
+    const st = await window.sp.getState();
+    const dump = JSON.stringify(st);
+    assert(dump.indexOf('sk-selftest-secret') < 0, '主进程把 API Key 推给了渲染层！');
+    assert(st.settings.aiApiKey === undefined, 'settings 里仍然带着 aiApiKey 字段');
+    assert(st.settings.aiKeySet === true, 'aiKeySet 标志没置上');
+    assert(st.settings.aiKeyHint && st.settings.aiKeyHint.indexOf('1234') >= 0, '密钥尾号提示不对：' + st.settings.aiKeyHint);
+    await window.sp.setSettings({ aiApiKey: '' });
+    await wait(200);
+    const st2 = await window.sp.getState();
+    assert(st2.settings.aiKeySet === false, '清除密钥后标志没复位');
+    return '密钥全程未出主进程';
   });
 
   /* 11. 历史面板：空状态与计数都要有内容 */
@@ -288,15 +489,39 @@
     const box = q('#answerBox');
     const rb = box.getBoundingClientRect();
     assert(rb.height > 150, '大输入框高度过小：' + rb.height);
-    assert(c.scrollWidth <= c.clientWidth + 2, '主区出现横向滚动');
+    assert(c.scrollWidth <= c.clientWidth + 2, '主区出现横向滚动（scrollWidth=' + c.scrollWidth + ' clientWidth=' + c.clientWidth + '）');
     const side = q('.side');
-    assert(side.getBoundingClientRect().width >= 300, '侧栏宽度异常');
-    return '输入框 ' + Math.round(rb.height) + 'px 高';
+    assert(side.getBoundingClientRect().width >= 360, '侧栏宽度异常：' + side.getBoundingClientRect().width);
+    for (const tab of ['queue', 'search', 'history', 'settings']) {
+      window.App.go(tab);
+      await wait(160);
+      const pane = q('.pane[data-pane="' + tab + '"]');
+      assert(pane.scrollWidth <= pane.clientWidth + 2, tab + ' 面板出现横向滚动：' + pane.scrollWidth + ' > ' + pane.clientWidth);
+    }
+    return '输入框 ' + Math.round(rb.height) + 'px 高 / 侧栏 ' + Math.round(side.getBoundingClientRect().width) + 'px';
+  });
+
+  /* 15. 结果列表的四种操作按钮都要真的能点到（用演示数据，不联网） */
+  await step('搜答案：结果行按钮全部可点击', async () => {
+    window.App.go('search');
+    await wait(200);
+    window.App.previewSearch();
+    await wait(400);
+    const n = document.querySelectorAll('#searchResult .ritem').length;
+    assert(n >= 3, '演示结果没有渲染出来：' + n);
+    const btns = Array.prototype.map.call(
+      document.querySelectorAll('#searchResult button[data-act]'),
+      (b) => '#searchResult button[data-act="' + b.getAttribute('data-act') + '"][data-i="' + b.getAttribute('data-i') + '"]'
+    );
+    const uniq = btns.filter((x, i) => btns.indexOf(x) === i);
+    assert(uniq.length >= 6, '结果行按钮数量异常：' + uniq.length);
+    return await hitTest(uniq);
   });
 
   out.info.errors = window.__SP_ERRORS__;
   out.info.fg = window.App.state() ? window.App.state().fg : null;
   out.info.engine = window.App.state() ? window.App.state().engine : null;
+  out.info.search = window.App.state() ? window.App.state().search : null;
   if (out.info.errors.length) out.fail.push('渲染层 JS 错误：' + out.info.errors.join(' | '));
   return JSON.stringify(out);
 })()

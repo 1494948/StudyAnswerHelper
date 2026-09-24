@@ -1,9 +1,10 @@
 'use strict';
 /* ------------------------------------------------------------------
  * 学习通答题助手 — 主进程
- *   主界面：大输入框 + 答案队列 + 历史 + 设置
+ *   主界面：大输入框 + 答案队列 + 历史 + 设置 + 搜答案
  *   触发：全局热键（默认 Ctrl+Alt+Enter）/ 自动模式（切到学习通后倒计时输入）
  *   输入：交给 engine/input-engine.js 子进程（koffi + SendInput 逐字输入）
+ *   搜答案：lib/answer-search.js（本地题库 / 网络检索 / AI 解答 三源合一）
  * ------------------------------------------------------------------ */
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +16,7 @@ if (!electron.app) {
   process.stderr.write('检测到 ELECTRON_RUN_AS_NODE，请清除该环境变量后再启动。\n');
   process.exit(1);
 }
-const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, shell, nativeTheme, clipboard, Notification, screen } = electron;
+const { app, BrowserWindow, Tray, Menu, ipcMain, globalShortcut, shell, nativeTheme, clipboard, Notification, screen, dialog } = electron;
 
 /* 打包后代码封在 app.asar 里，但"原生模块 / 图标 / 可被 fork 执行的脚本"必须是真实文件，
    所以统一走这个函数：优先取 app.asar.unpacked 下的同名解包副本。 */
@@ -33,19 +34,18 @@ function logLine(s) {
 }
 
 /* ---------------- 测试模式：数据隔离（必须在单实例锁之前） ---------------- */
-const TEST_MODE = !!(process.env.SP_SELFTEST || process.env.SP_SMOKE || process.env.SP_SHOT);
-const REAL_USER_DATA = app.getPath('userData');
+const TEST_MODE = !!(process.env.SP_SELFTEST || process.env.SP_SMOKE || process.env.SP_SHOT || process.env.SP_SEARCHTEST);
 let TEST_DIR = null;
 if (TEST_MODE) {
   TEST_DIR = path.join(app.getPath('temp'), 'study-answer-helper-test');
   try { fs.mkdirSync(TEST_DIR, { recursive: true }); } catch (_) { /* 忽略 */ }
   app.setPath('userData', TEST_DIR);
-  const dataFile = path.join(TEST_DIR, 'answer-data.json');
-  if (process.env.SP_SHOT) {
-    const src = path.join(REAL_USER_DATA, 'answer-data.json');
-    if (fs.existsSync(src)) { try { fs.copyFileSync(src, dataFile); } catch (_) { /* 忽略 */ } }
-  } else if (fs.existsSync(dataFile)) {
-    try { fs.unlinkSync(dataFile); } catch (_) { /* 忽略 */ }
+  /* 所有测试模式都从干净状态开始：
+     - 断言才有确定性，不会读到上一轮残留的题库/草稿
+     - 截图模式也不会把用户的真实答案内容截进公开的 preview 图里（截图用的演示数据在 runShots 里现造） */
+  for (const name of ['answer-data.json', 'answer-bank.json']) {
+    const f = path.join(TEST_DIR, name);
+    try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) { /* 忽略 */ }
   }
 }
 if (SMOKE_LOG) {
@@ -78,7 +78,26 @@ const DEFAULT_STATE = {
     hotkeyNext: 'c-alt-down',
     matchTitles: ['学习通', '超星', 'chaoxing', 'xuexitong'],
     matchProcs: ['学习通', 'chaoxing', 'xuexitong', 'xxt'],
-    theme: 'system'
+    theme: 'system',
+
+    /* ---- 搜答案 ---- */
+    searchLocal: true,          /* 查本地题库 */
+    searchWeb: true,            /* 联网检索 */
+    searchAi: false,            /* 调 AI 解答（需要配置密钥） */
+    searchEngine: 'auto',       /* auto | sogou | so360 | bing */
+    searchMinScore: 0.55,       /* 本地题库命中阈值 */
+    searchTopN: 6,              /* 返回候选条数 */
+    searchTimeoutMs: 20000,     /* 单个网络请求超时 */
+    searchAutoFill: true,       /* 高可信答案自动填进大框 */
+    searchAutoFillScore: 0.92,  /* 自动填入的分数门槛 */
+    hotkeySearch: 'c-alt-f',    /* 从剪贴板取题搜索 */
+
+    /* ---- AI 解答（OpenAI 兼容 /chat/completions） ---- */
+    aiBaseUrl: 'https://api.deepseek.com/v1',
+    aiApiKey: '',
+    aiModel: 'deepseek-chat',
+    aiMaxTokens: 1200,
+    aiTemperature: 0.2
   },
   draft: '',
   queue: [],
@@ -89,6 +108,11 @@ const DEFAULT_STATE = {
 
 const store = new Store(path.join(app.getPath('userData'), 'answer-data.json'), DEFAULT_STATE);
 let S = store.all();
+
+/* 本地题库：离线答案源，落盘在 userData/answer-bank.json */
+const { AnswerBank } = require('./lib/answer-bank');
+const searchLib = require('./lib/answer-search');
+const bank = new AnswerBank(path.join(app.getPath('userData'), 'answer-bank.json'));
 
 const HOTKEY_PRESETS = {
   'c-alt-enter': { label: 'Ctrl + Alt + Enter', accel: 'Control+Alt+Return' },
@@ -101,6 +125,19 @@ const HOTKEY_NEXT_PRESETS = {
   'c-alt-right': { label: 'Ctrl + Alt + →', accel: 'Control+Alt+Right' },
   'f10': { label: 'F10', accel: 'F10' }
 };
+const HOTKEY_SEARCH_PRESETS = {
+  'c-alt-f': { label: 'Ctrl + Alt + F', accel: 'Control+Alt+F' },
+  'c-alt-q': { label: 'Ctrl + Alt + Q', accel: 'Control+Alt+Q' },
+  'f8': { label: 'F8', accel: 'F8' }
+};
+const SEARCH_ENGINE_OPTIONS = {
+  auto: '自动（搜狗 → 360 → 必应）',
+  sogou: '只用搜狗',
+  so360: '只用 360',
+  bing: '只用必应'
+};
+const SEARCH_SCORE_OPTIONS = { 0.45: '宽松（0.45）', 0.55: '标准（0.55）', 0.65: '严格（0.65）', 0.75: '很严格（0.75）' };
+const SEARCH_TOP_OPTIONS = { 4: '4 条', 6: '6 条', 10: '10 条' };
 const CLEANUP_LEVELS = {
   none: '不处理',
   light: '去首尾空白 + 合并空行',
@@ -156,9 +193,26 @@ let wasMatched = false;
 let lastToastAt = 0;
 const auto = { active: false, remain: 0, timer: null, lastFireAt: 0, hwnd: 0 };
 let lastInsert = { at: 0, ok: false, msg: '' };
-let hotkeyStatus = { mainOk: false, nextOk: false };
+let hotkeyStatus = { mainOk: false, nextOk: false, searchOk: false };
+
+/* ---------------- 搜答案运行时状态 ---------------- */
+const searchState = {
+  active: false,
+  seq: 0,
+  at: 0,
+  ms: 0,
+  question: '',
+  count: 0,
+  engine: '',
+  engineId: '',
+  errors: [],
+  candidates: [],
+  query: ''
+};
 
 const settings = () => S.settings || DEFAULT_STATE.settings;
+
+const SOURCE_LABEL = { local: '本地题库', web: '网络检索', ai: 'AI 解答' };
 
 /* ---------------- 输入引擎 ---------------- */
 function enginePath() {
@@ -466,6 +520,248 @@ function setDraftFromQueue() {
   send('draft', S.draft);
 }
 
+/* ================= 搜答案 ================= */
+
+/** 把文本写进大框（与界面双向同步，走的是和队列同一条链路） */
+function setDraftText(text) {
+  const t = typeof text === 'string' ? text : String(text === undefined || text === null ? '' : text);
+  S.draft = t.slice(0, 20000);
+  store.set('draft', S.draft);
+  send('draft', S.draft);
+  return S.draft;
+}
+
+/** 设置对象给渲染层时要脱敏：AI 密钥不能出主进程 */
+function publicSettings() {
+  const st = Object.assign({}, settings());
+  st.aiKeySet = !!String(st.aiApiKey || '').trim();
+  st.aiKeyHint = st.aiKeySet ? ('已保存（尾号 ' + String(st.aiApiKey).slice(-4) + '）') : '';
+  delete st.aiApiKey;
+  return st;
+}
+
+function publicSearch(withCandidates) {
+  const out = {
+    active: searchState.active,
+    at: searchState.at,
+    ms: searchState.ms,
+    question: searchState.question,
+    count: searchState.count,
+    engine: searchState.engine,
+    errors: searchState.errors,
+    query: searchState.query,
+    bankCount: bank.count(),
+    engines: searchLib.engineStatus()
+  };
+  if (withCandidates) out.candidates = searchState.candidates;
+  return out;
+}
+
+/** 用当前设置拼出检索参数 */
+function searchOptions(override) {
+  const st = settings();
+  const o = override || {};
+  return {
+    sources: o.sources || {
+      local: !!st.searchLocal,
+      web: !!st.searchWeb,
+      ai: !!st.searchAi
+    },
+    engine: st.searchEngine || 'auto',
+    minScore: Number(st.searchMinScore) || 0.55,
+    topN: parseInt(st.searchTopN, 10) || 6,
+    timeoutMs: parseInt(st.searchTimeoutMs, 10) || 20000,
+    ai: {
+      apiKey: st.aiApiKey,
+      baseUrl: st.aiBaseUrl,
+      model: st.aiModel,
+      maxTokens: st.aiMaxTokens,
+      temperature: Number(st.aiTemperature)
+    }
+  };
+}
+
+/**
+ * 执行一次检索。
+ * payload: { question }            —— 用界面上的题目框内容
+ *          { fromClipboard: true }  —— 从剪贴板取题（配合搜题热键）
+ *          { sources, useTop }      —— 覆盖来源 / 直接采用第 N 条
+ */
+async function runSearchNow(payload) {
+  const p = payload || {};
+  const st = settings();
+  const raw = p.fromClipboard ? clipboard.readText() : String(p.question || '');
+  const question = String(raw || '').trim();
+
+  /* 直接采用某条候选（结果列表上的"填入大框"） */
+  if (p.useTop !== undefined && p.useTop !== null) {
+    const idx = parseInt(p.useTop, 10) || 0;
+    const c = searchState.candidates[idx];
+    if (!c) return { ok: false, err: '候选不存在' };
+    const text = String(p.text || c.answer || '');
+    if (!text.trim()) return { ok: false, err: '这条候选没有可填入的答案' };
+    setDraftText(text);
+    if (c.source === 'local' && c.id) bank.touch(c.id);
+    toast('已填入大框（' + (SOURCE_LABEL[c.source] || c.source) + '）', 'ok');
+    pushState();
+    return { ok: true, text: text };
+  }
+
+  if (!question) {
+    toast(p.fromClipboard
+      ? '剪贴板里没有文字。先在题目上按 Ctrl+C 复制，再按搜题热键'
+      : '题目是空的，先把题目贴进「题目」框', 'warn');
+    return { ok: false, err: 'empty-question' };
+  }
+  if (searchState.active) {
+    toast('上一次搜索还没结束，请稍候…', 'warn');
+    return { ok: false, err: 'busy' };
+  }
+
+  const opts = searchOptions(p);
+  const id = ++searchState.seq;
+  searchState.active = true;
+  searchState.question = question;
+  searchState.errors = [];
+  searchState.candidates = [];
+  searchState.count = 0;
+  searchState.query = searchLib.cleanQuestion(question, 100);
+  searchState.at = Date.now();
+  pushState();
+  send('search', publicSearch(true));
+
+  let res = null;
+  try {
+    res = await searchLib.runSearch({
+      question: question,
+      sources: opts.sources,
+      bank: bank,
+      engine: opts.engine,
+      minScore: opts.minScore,
+      topN: opts.topN,
+      timeoutMs: opts.timeoutMs,
+      ai: opts.ai
+    });
+  } catch (e) {
+    res = {
+      ok: false,
+      err: '检索过程出错：' + (e && e.message ? e.message : String(e)),
+      candidates: [], errors: [], ms: 0
+    };
+  }
+
+  if (id !== searchState.seq) return { ok: false, err: 'stale' };   /* 已有更新的检索，丢弃本次 */
+
+  searchState.active = false;
+  searchState.at = Date.now();
+  searchState.ms = res.ms || 0;
+  searchState.errors = res.errors || [];
+
+  if (!res.ok) {
+    searchState.candidates = [];
+    searchState.count = 0;
+    toast(res.err || '搜索失败', 'error');
+    pushState();
+    send('search', publicSearch(true));
+    return res;
+  }
+
+  const list = res.candidates || [];
+  searchState.candidates = list;
+  searchState.count = list.length;
+  searchState.engine = (res.meta && res.meta.web && res.meta.web.engine) || '';
+  searchState.query = (res.meta && res.meta.web && res.meta.web.query) || searchState.query;
+
+  if (!list.length) {
+    toast(searchState.errors.length
+      ? '没有找到候选答案（' + searchState.errors[0] + '）'
+      : '没有找到候选答案，换一种题目写法再试试', 'warn');
+  } else {
+    const top = list[0];
+    const pct = Math.round((top.score || 0) * 100);
+    toast('找到 ' + list.length + ' 条候选，最相关 ' + pct + '%（' + (SOURCE_LABEL[top.source] || top.source) + '）', 'ok');
+    /* 高可信的单条答案自动填进大框，省一次点击 */
+    const threshold = Number(st.searchAutoFillScore) || 0.92;
+    if (st.searchAutoFill && top.kind === 'answer' && top.answer && (top.score || 0) >= threshold) {
+      setDraftText(top.answer);
+      toast('已自动填入大框：' + String(top.answer).slice(0, 30), 'ok');
+      if (top.source === 'local' && top.id) bank.touch(top.id);
+    }
+  }
+
+  send('search', publicSearch(true));
+  pushState();
+  logLine('检索完成 ' + list.length + ' 条 / ' + searchState.ms + 'ms / ' + (searchState.engine || '无网络结果'));
+  return res;
+}
+
+/** 把"当前题目 + 大框里的答案"存进本地题库 */
+function saveCurrentToBank(payload) {
+  const p = payload || {};
+  const question = String(p.question || searchState.question || '').trim();
+  const answer = String(p.answer !== undefined && p.answer !== null ? p.answer : currentRawText() || '');
+  if (!question) return { ok: false, err: '题目是空的，先搜一次或把题目贴进题目框' };
+  if (!answer.trim()) return { ok: false, err: '答案是空的，先把答案写进大框' };
+  const r = bank.add({ question: question, answer: answer, note: p.note, source: p.source || 'manual' });
+  if (r.ok) {
+    bank.flush();          /* 立刻落盘：用户点完就关程序也不该丢 */
+    toast(r.updated ? '题库里已有这道题，答案已更新' : '已存进题库', 'ok');
+  } else {
+    toast('存入题库失败：' + r.err, 'error');
+  }
+  pushState();
+  return r;
+}
+
+async function exportBank() {
+  const win = (mainWin && !mainWin.isDestroyed()) ? mainWin : null;
+  const def = path.join(app.getPath('documents'), '学习通题库-' + new Date().toISOString().slice(0, 10) + '.json');
+  let r = null;
+  try {
+    r = await dialog.showSaveDialog(win, {
+      title: '导出题库',
+      defaultPath: def,
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }]
+    });
+  } catch (e) {
+    return { ok: false, err: '打开保存对话框失败：' + (e && e.message ? e.message : String(e)) };
+  }
+  if (!r || r.canceled || !r.filePath) return { ok: false, canceled: true };
+  try {
+    fs.writeFileSync(r.filePath, bank.exportJson(), 'utf8');
+    toast('已导出 ' + bank.count() + ' 条到 ' + r.filePath, 'ok');
+    return { ok: true, path: r.filePath, count: bank.count() };
+  } catch (e) {
+    return { ok: false, err: '写入失败：' + (e && e.message ? e.message : String(e)) };
+  }
+}
+
+async function importBankFile() {
+  const win = (mainWin && !mainWin.isDestroyed()) ? mainWin : null;
+  let r = null;
+  try {
+    r = await dialog.showOpenDialog(win, {
+      title: '选择题库文件',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }]
+    });
+  } catch (e) {
+    return { ok: false, err: '打开文件对话框失败：' + (e && e.message ? e.message : String(e)) };
+  }
+  if (!r || r.canceled || !r.filePaths || !r.filePaths.length) return { ok: false, canceled: true };
+  let text = '';
+  try {
+    text = fs.readFileSync(r.filePaths[0], 'utf8');
+  } catch (e) {
+    return { ok: false, err: '读取失败：' + (e && e.message ? e.message : String(e)) };
+  }
+  const res = bank.importJson(text);
+  if (res.ok) toast('导入完成：新增 ' + res.added + ' 条，更新 ' + res.updated + ' 条', 'ok');
+  else toast('导入失败：' + res.err, 'error');
+  pushState();
+  return Object.assign({ path: r.filePaths[0] }, res);
+}
+
 /* ---------------- 窗口 ---------------- */
 const THEME_COLORS = {
   light: { bg: '#eef1f6', bar: '#ffffff', symbol: '#5a6a7d' },
@@ -491,7 +787,7 @@ function createWindow() {
   const mode = resolvedTheme();
   const c = THEME_COLORS[mode];
   mainWin = new BrowserWindow({
-    width: 1000, height: 700, minWidth: 820, minHeight: 580,
+    width: 1100, height: 720, minWidth: 940, minHeight: 600,
     show: false,
     backgroundColor: c.bg,
     title: '学习通答题助手',
@@ -550,6 +846,8 @@ function updateTray() {
     { label: '输入到学习通（' + hotkeyLabel(st.hotkeyMain) + '）', click: () => doInsert('tray') },
     { label: '答案队列：下一条（' + hotkeyLabel(st.hotkeyNext, true) + '）', click: () => useNext() },
     { type: 'separator' },
+    { label: '搜答案：从剪贴板取题（' + hotkeyLabel(st.hotkeySearch, false, true) + '）', click: () => { showMain(); setTimeout(() => runSearchNow({ fromClipboard: true }), 150); } },
+    { type: 'separator' },
     {
       label: '自动模式（切到学习通就自动输入）',
       type: 'checkbox',
@@ -562,8 +860,8 @@ function updateTray() {
   ]));
 }
 
-function hotkeyLabel(id, next) {
-  const map = next ? HOTKEY_NEXT_PRESETS : HOTKEY_PRESETS;
+function hotkeyLabel(id, next, search) {
+  const map = search ? HOTKEY_SEARCH_PRESETS : (next ? HOTKEY_NEXT_PRESETS : HOTKEY_PRESETS);
   return (map[id] || {}).label || '未设置';
 }
 
@@ -593,10 +891,19 @@ function registerShortcuts() {
   const st = settings();
   const mainAccel = (HOTKEY_PRESETS[st.hotkeyMain] || HOTKEY_PRESETS['c-alt-enter']).accel;
   const nextAccel = (HOTKEY_NEXT_PRESETS[st.hotkeyNext] || HOTKEY_NEXT_PRESETS['c-alt-down']).accel;
+  const searchAccel = (HOTKEY_SEARCH_PRESETS[st.hotkeySearch] || HOTKEY_SEARCH_PRESETS['c-alt-f']).accel;
   try { hotkeyStatus.mainOk = globalShortcut.register(mainAccel, () => doInsert('hotkey')); } catch (_) { hotkeyStatus.mainOk = false; }
   try { hotkeyStatus.nextOk = globalShortcut.register(nextAccel, () => useNext()); } catch (_) { hotkeyStatus.nextOk = false; }
+  /* 搜题热键：把窗口带到前面，然后从剪贴板取题搜索 —— 老师在学习通上复制题目后直接按这个键 */
+  try {
+    hotkeyStatus.searchOk = globalShortcut.register(searchAccel, () => {
+      showMain();
+      setTimeout(() => { runSearchNow({ fromClipboard: true }); }, 180);
+    });
+  } catch (_) { hotkeyStatus.searchOk = false; }
   if (!hotkeyStatus.mainOk) logLine('主热键注册失败：' + mainAccel);
   if (!hotkeyStatus.nextOk) logLine('下一条热键注册失败：' + nextAccel);
+  if (!hotkeyStatus.searchOk) logLine('搜题热键注册失败：' + searchAccel);
 }
 
 function useNext() {
@@ -625,7 +932,7 @@ function useNext() {
 function publicState() {
   const st = settings();
   return {
-    settings: st,
+    settings: publicSettings(),
     draft: S.draft || '',
     queue: queueList(),
     queueIndex: queueIndex(),
@@ -635,18 +942,29 @@ function publicState() {
     fg: fg,
     lastMatchedHwnd: lastMatchedHwnd,
     auto: { active: auto.active, remain: auto.remain },
+    search: publicSearch(false),
     hotkeys: {
       main: hotkeyLabel(st.hotkeyMain),
       next: hotkeyLabel(st.hotkeyNext, true),
+      search: hotkeyLabel(st.hotkeySearch, false, true),
       mainOk: hotkeyStatus.mainOk,
-      nextOk: hotkeyStatus.nextOk
+      nextOk: hotkeyStatus.nextOk,
+      searchOk: hotkeyStatus.searchOk
     },
     presets: {
       main: Object.keys(HOTKEY_PRESETS).map((k) => ({ id: k, label: HOTKEY_PRESETS[k].label })),
-      next: Object.keys(HOTKEY_NEXT_PRESETS).map((k) => ({ id: k, label: HOTKEY_NEXT_PRESETS[k].label }))
+      next: Object.keys(HOTKEY_NEXT_PRESETS).map((k) => ({ id: k, label: HOTKEY_NEXT_PRESETS[k].label })),
+      search: Object.keys(HOTKEY_SEARCH_PRESETS).map((k) => ({ id: k, label: HOTKEY_SEARCH_PRESETS[k].label }))
     },
-    labels: { cleanup: CLEANUP_LEVELS, delay: DELAY_OPTIONS },
+    labels: {
+      cleanup: CLEANUP_LEVELS,
+      delay: DELAY_OPTIONS,
+      searchEngine: SEARCH_ENGINE_OPTIONS,
+      searchScore: SEARCH_SCORE_OPTIONS,
+      searchTop: SEARCH_TOP_OPTIONS
+    },
     dataFile: path.join(app.getPath('userData'), 'answer-data.json'),
+    bankFile: path.join(app.getPath('userData'), 'answer-bank.json'),
     version: app.getVersion(),
     lastInsert: lastInsert,
     testMode: TEST_MODE
@@ -686,7 +1004,7 @@ function registerIpc() {
     }
     store.set('settings', st);
     S = store.all();
-    if (patch && ('hotkeyMain' in patch || 'hotkeyNext' in patch)) registerShortcuts();
+    if (patch && ('hotkeyMain' in patch || 'hotkeyNext' in patch || 'hotkeySearch' in patch)) registerShortcuts();
     if (patch && 'autoLaunch' in patch) applyLoginItem();
     if (patch && 'theme' in patch) applyThemeToWindow();
     if (patch && 'matchTitles' in patch) sendEngineConfig();
@@ -709,13 +1027,20 @@ function registerIpc() {
     const file = path.join(app.getPath('userData'), 'answer-data.json');
     let disk = null;
     try { disk = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { disk = null; }
+    let bankDisk = null;
+    try { bankDisk = JSON.parse(fs.readFileSync(bank.file, 'utf8')); } catch (e) { bankDisk = null; }
+    const items = bankDisk && Array.isArray(bankDisk.items) ? bankDisk.items : [];
     return {
       file: file,
       hasFile: !!disk,
       draft: disk ? disk.draft : null,
       queueLen: disk && Array.isArray(disk.queue) ? disk.queue.length : 0,
       cleanup: disk && disk.settings ? disk.settings.cleanup : null,
-      matchTitles: disk && disk.settings ? disk.settings.matchTitles : null
+      matchTitles: disk && disk.settings ? disk.settings.matchTitles : null,
+      searchEngine: disk && disk.settings ? disk.settings.searchEngine : null,
+      bankFile: bank.file,
+      bankCount: items.length,
+      bankFirst: items[0] ? { question: items[0].question, answer: items[0].answer } : null
     };
   });
 
@@ -846,6 +1171,92 @@ function registerIpc() {
     return { ok: true, added: added };
   });
 
+  /* ---------------- 搜答案 ---------------- */
+  ipcMain.handle('search:run', (e, payload) => runSearchNow(payload || {}));
+
+  ipcMain.handle('search:fromClipboard', () => runSearchNow({ fromClipboard: true }));
+
+  ipcMain.handle('search:results', () => publicSearch(true));
+
+  ipcMain.handle('search:cancel', () => {
+    /* 只是把"忙"标记清掉，让用户可以重新发起；真正的网络请求会自行超时结束 */
+    if (searchState.active) {
+      searchState.active = false;
+      searchState.seq++;
+      toast('已取消本次搜索', 'warn');
+      pushState();
+      send('search', publicSearch(true));
+    }
+    return true;
+  });
+
+  ipcMain.handle('search:openUrl', (e, url) => {
+    const u = String(url || '').trim();
+    if (!/^https?:\/\//i.test(u)) return { ok: false, err: '不是有效的网页地址' };
+    shell.openExternal(u).catch(() => { /* 忽略 */ });
+    return { ok: true };
+  });
+
+  ipcMain.handle('search:copy', (e, text) => {
+    clipboard.writeText(String(text === undefined || text === null ? '' : text));
+    return { ok: true };
+  });
+
+  ipcMain.handle('bank:list', (e, payload) => {
+    const p = payload || {};
+    return { ok: true, items: bank.brief(p.keyword, p.limit), count: bank.count() };
+  });
+
+  ipcMain.handle('bank:add', (e, payload) => saveCurrentToBank(payload));
+
+  ipcMain.handle('bank:update', (e, payload) => {
+    const p = payload || {};
+    const r = bank.update(p.id, { question: p.question, answer: p.answer, note: p.note });
+    pushState();
+    return r;
+  });
+
+  ipcMain.handle('bank:remove', (e, id) => {
+    const r = bank.remove(id);
+    pushState();
+    return r;
+  });
+
+  ipcMain.handle('bank:clear', () => {
+    const r = bank.clear();
+    toast('题库已清空', 'warn');
+    pushState();
+    return r;
+  });
+
+  ipcMain.handle('bank:importText', (e, text) => {
+    const r = bank.importText(text);
+    if (r.ok) {
+      toast('批量导入：新增 ' + r.added + ' 条，更新 ' + r.updated + ' 条' +
+        (r.skipped ? '，跳过 ' + r.skipped + ' 行（缺分隔符）' : ''), 'ok');
+    }
+    pushState();
+    return r;
+  });
+
+  ipcMain.handle('bank:exportFile', () => exportBank());
+
+  ipcMain.handle('bank:importFile', () => importBankFile());
+
+  ipcMain.handle('ai:test', async (e, override) => {
+    const st = settings();
+    const cfg = Object.assign({
+      apiKey: st.aiApiKey,
+      baseUrl: st.aiBaseUrl,
+      model: st.aiModel
+    }, override || {});
+    if (override && override.apiKey === undefined && cfg.apiKey === undefined) cfg.apiKey = st.aiApiKey;
+    const r = await searchLib.testAi(cfg);
+    if (r.ok) toast('AI 连接正常（' + r.ms + 'ms，模型 ' + (r.model || cfg.model) + '）', 'ok');
+    else toast('AI 连接失败：' + r.err, 'error');
+    return r;
+  });
+
   ipcMain.handle('theme:apply', (e, mode) => { applyThemeToWindow(); return true; });
 }
 
@@ -873,6 +1284,7 @@ app.whenReady().then(() => {
   if (process.env.SP_SELFTEST) runSelftest();
   if (process.env.SP_SHOT) runShots();
   if (process.env.SP_SMOKE) runSmoke();
+  if (process.env.SP_SEARCHTEST) runSearchTest();
 });
 
 /* ---------------- 自动化验证：交互级自检 ---------------- */
@@ -891,27 +1303,80 @@ function runSelftest() {
 }
 
 /* ---------------- 自动化验证：视觉走查 ---------------- */
+/** 截图专用演示数据：现造，绝不使用用户真实数据（preview/ 会进仓库） */
+function seedShotData() {
+  const demo = [
+    '由 (a+b)²=a²+2ab+b² 得 a²+b²=(a+b)²-2ab=3²-2×2=9-4=5',
+    'f(x)=x²-2x+3=(x-1)²+2，在 [0,3] 上最大值是 6（x=3 时取到）',
+    'y=sin(2x+π/3) 的最小正周期 T=2π/|ω|=2π/2=π'
+  ];
+  S.draft = demo[0];
+  S.queue = [
+    { id: 'shot1', label: '第 1 题（选择题）', text: demo[0] },
+    { id: 'shot2', label: '第 2 题（填空）', text: demo[1] },
+    { id: 'shot3', label: '第 3 题', text: demo[2] }
+  ];
+  S.queueIndex = 0;
+  S.queueMode = true;
+  S.history = [
+    { at: Date.now() - 120000, text: demo[0] },
+    { at: Date.now() - 600000, text: demo[1] },
+    { at: Date.now() - 1800000, text: demo[2] }
+  ];
+  store.set('draft', S.draft);
+  store.set('queue', S.queue);
+  store.set('queueIndex', 0);
+  store.set('queueMode', true);
+  store.set('history', S.history);
+  store.flush();
+  bank.clear();
+  bank.add({ question: '已知a+b=3，ab=2，则a²+b²的值为（ ）', answer: '5', note: '完全平方公式变形', source: 'manual' });
+  bank.add({ question: '函数f(x)=x²-2x+3在区间[0,3]上的最大值是（ ）', answer: '6', note: '配方后比较端点值', source: 'manual' });
+  bank.add({ question: '求函数y=sin(2x+π/3)的最小正周期', answer: 'π', note: 'T=2π/|ω|，此处 ω=2', source: 'manual' });
+  bank.flush();
+  logLine('已写入截图演示数据（题库 ' + bank.count() + ' 条 / 队列 ' + S.queue.length + ' 条）');
+}
+
 function runShots() {
   const outDir = path.join(__dirname, '..', '..', 'preview');
   setTimeout(async () => {
     /* 窗口必须真的显示出来，否则合成器不产帧，capturePage 拿到的是空白图 */
     try { mainWin.show(); } catch (_) { /* 忽略 */ }
     await delay(600);
+    seedShotData();
+    pushState();
+    await delay(600);
     const modes = (process.env.SP_THEME ? [process.env.SP_THEME] : ['light', 'dark']);
+    /* search 视图需要先塞点演示数据进去，否则截到的只是一个空状态 */
     const shots = [
       { name: 'main-queue', view: 'queue', wait: 900 },
       { name: 'main-history', view: 'history', wait: 700 },
-      { name: 'main-settings', view: 'settings', wait: 700 }
+      { name: 'main-search', view: 'search', wait: 1000, preview: true },
+      { name: 'main-settings', view: 'settings', wait: 700 },
+      { name: 'modal-bank', view: 'search', wait: 900, preview: true, bankModal: true }
     ];
     for (const mode of modes) {
       const dir = mode === 'dark' ? path.join(outDir, 'dark') : outDir;
       fs.mkdirSync(dir, { recursive: true });
       for (const s of shots) {
+        if (s.preview) {
+          await mainWin.webContents.executeJavaScript(
+            'window.App && window.App.previewSearch && window.App.previewSearch(); true', true);
+        }
+        if (s.bankModal) {
+          await mainWin.webContents.executeJavaScript(
+            'window.App && window.App.openBank && window.App.openBank(); true', true);
+        }
         await mainWin.webContents.executeJavaScript('window.__SP_SET_THEME__ && window.__SP_SET_THEME__(' + JSON.stringify(mode) + '); App.go(' + JSON.stringify(s.view) + '); true', true);
         await delay(s.wait);
         const img = await mainWin.webContents.capturePage();
         fs.writeFileSync(path.join(dir, s.name + '.png'), img.toPNG());
         logLine('SHOT ' + mode + '/' + s.name);
+        if (s.bankModal) {
+          await mainWin.webContents.executeJavaScript(
+            'window.App && window.App.closeBank && window.App.closeBank(); true', true);
+          await delay(200);
+        }
       }
     }
     isQuitting = true;
@@ -992,4 +1457,71 @@ async function runSmoke() {
   logLine('SMOKE_RESULT ' + JSON.stringify(result));
   isQuitting = true;
   setTimeout(() => app.quit(), 400);
+}
+
+/* ---------------- 自动化验证：真实检索冒烟（SP_SEARCHTEST，需要网络） ----------------
+ * 与 SP_SELFTEST 分开：自检必须离线可复现，而这条链路本来就依赖外部搜索引擎，
+ * 所以单独一个模式，结果只写日志供人工判读。
+ * 可用环境变量覆盖：SP_SEARCH_Q / SP_SEARCH_ENGINE / SP_AI_KEY / SP_AI_BASE / SP_AI_MODEL
+ */
+async function runSearchTest() {
+  const out = { env: { engine: process.env.SP_SEARCH_ENGINE || 'auto', ai: !!process.env.SP_AI_KEY } };
+  try {
+    await delay(1500);
+    const question = process.env.SP_SEARCH_Q || '已知a+b=3，ab=2，则a²+b²的值为（ ）';
+
+    /* 1. 先往本地题库塞一条，验证离线链路 */
+    bank.add({ question: question, answer: 'a²+b²=(a+b)²-2ab=9-4=5', source: 'searchtest' });
+    bank.flush();
+    out.bankCount = bank.count();
+    out.bankFile = path.join(app.getPath('userData'), 'answer-bank.json');
+    out.bankFileExists = fs.existsSync(out.bankFile);
+
+    /* 2. 走完整检索 */
+    const r = await searchLib.runSearch({
+      question: question,
+      sources: { local: true, web: true, ai: !!process.env.SP_AI_KEY },
+      bank: bank,
+      engine: process.env.SP_SEARCH_ENGINE || 'auto',
+      minScore: 0.55,
+      topN: 6,
+      timeoutMs: 25000,
+      ai: {
+        apiKey: process.env.SP_AI_KEY || '',
+        baseUrl: process.env.SP_AI_BASE || settings().aiBaseUrl,
+        model: process.env.SP_AI_MODEL || settings().aiModel
+      }
+    });
+    out.ok = r.ok;
+    out.ms = r.ms;
+    out.errors = r.errors;
+    out.meta = r.meta;
+    out.candidateCount = (r.candidates || []).length;
+    out.candidates = (r.candidates || []).map((c) => ({
+      source: c.source,
+      kind: c.kind,
+      score: Number((c.score || 0).toFixed(3)),
+      answer: c.answer || '',
+      title: String(c.title || c.question || '').slice(0, 70),
+      url: c.url || ''
+    }));
+
+    /* 3. 再验证 IPC 完整链路：真的走一次 runSearchNow（含自动填入大框与状态广播） */
+    if (mainWin && !mainWin.isDestroyed()) {
+      setDraftText('');
+      const r2 = await runSearchNow({ question: question, sources: { local: true, web: false, ai: false } });
+      out.ipc = {
+        ok: !!(r2 && r2.ok),
+        count: (r2 && r2.candidates ? r2.candidates.length : 0),
+        draft: S.draft || ''
+      };
+      out.publicStateKeys = Object.keys(publicState().search || {});
+      out.leakCheck = JSON.stringify(publicState()).indexOf('apiKey') >= 0 ? 'LEAK' : 'clean';
+    }
+  } catch (e) {
+    out.fatal = e && e.stack ? String(e.stack) : String(e);
+  }
+  logLine('SEARCHTEST ' + JSON.stringify(out));
+  isQuitting = true;
+  setTimeout(() => app.quit(), 300);
 }

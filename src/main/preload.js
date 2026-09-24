@@ -38,9 +38,30 @@ contextBridge.exposeInMainWorld('sp', {
     clear: () => invoke('history:clear'),
     remove: (at) => invoke('history:remove', at)
   },
+  search: {
+    run: (payload) => invoke('search:run', payload || {}),
+    fromClipboard: () => invoke('search:fromClipboard'),
+    results: () => invoke('search:results'),
+    cancel: () => invoke('search:cancel'),
+    useCandidate: (index, text) => invoke('search:run', { useTop: index, text: text }),
+    openUrl: (url) => invoke('search:openUrl', url),
+    copy: (text) => invoke('search:copy', text)
+  },
+  bank: {
+    list: (keyword, limit) => invoke('bank:list', { keyword: keyword, limit: limit }),
+    add: (payload) => invoke('bank:add', payload || {}),
+    update: (payload) => invoke('bank:update', payload || {}),
+    remove: (id) => invoke('bank:remove', id),
+    clear: () => invoke('bank:clear'),
+    importText: (text) => invoke('bank:importText', text),
+    importFile: () => invoke('bank:importFile'),
+    exportFile: () => invoke('bank:exportFile')
+  },
+  aiTest: (cfg) => invoke('ai:test', cfg),
   onState: (cb) => on('state', cb),
   onFg: (cb) => on('fg', cb),
   onAuto: (cb) => on('auto', cb),
   onToast: (cb) => on('toast', cb),
-  onDraft: (cb) => on('draft', cb)
+  onDraft: (cb) => on('draft', cb),
+  onSearch: (cb) => on('search', cb)
 });

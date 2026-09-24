@@ -38,7 +38,7 @@
 
       <div class="editor-wrap">
         <textarea id="answerBox" spellcheck="false" autocomplete="off"
-          placeholder="把答案写在这里（可直接 Ctrl+V 粘贴）。写好后按 Ctrl+Alt+Enter，就会自动逐字输入到学习通答题框。"></textarea>
+          placeholder="把答案写在这里（可直接 Ctrl+V 粘贴），或到右边「搜答案」里搜一题。写好后按 Ctrl+Alt+Enter 自动逐字输入到学习通。"></textarea>
         <div class="countdown" id="countdown" hidden>
           <span class="cd-num" id="cdNum">3</span>
           <span class="cd-text">秒后自动输入到学习通…</span>
@@ -81,11 +81,46 @@
     <aside class="side">
       <div class="tabs">
         <button class="tab active" data-tab="queue">答案队列</button>
+        <button class="tab" data-tab="search">搜答案</button>
         <button class="tab" data-tab="history">历史</button>
         <button class="tab" data-tab="settings">设置</button>
       </div>
 
       <div class="panes">
+
+        <!-- ============ 搜答案 ============ -->
+        <div class="pane" data-pane="search" hidden>
+          <div class="pane-head">
+            <span>题目</span>
+            <span class="spacer"></span>
+            <span class="muted" id="searchMeta"></span>
+          </div>
+          <textarea id="questionBox" class="qbox" spellcheck="false"
+            placeholder="把题目粘到这里（Ctrl+V），再点下面的「搜答案」。&#10;也可以在学习通里复制题目，直接按搜题热键。"></textarea>
+          <div class="row-ops">
+            <button class="mini" id="qPasteBtn">读剪贴板</button>
+            <button class="mini" id="qClearBtn">清空题目</button>
+            <span class="spacer"></span>
+            <button class="mini" id="qUseDraftBtn" title="把大框里的内容当成题目来搜">用大框当题目</button>
+          </div>
+          <div class="search-src">
+            <label class="chk"><input type="checkbox" id="srcLocalChk"><span>本地题库</span></label>
+            <label class="chk"><input type="checkbox" id="srcWebChk"><span>网络检索</span></label>
+            <label class="chk"><input type="checkbox" id="srcAiChk"><span>AI 解答</span></label>
+          </div>
+          <button class="primary slim" id="searchBtn">
+            <span>搜答案</span><kbd id="kbdSearch">Ctrl+Alt+F</kbd>
+          </button>
+          <div class="hint" id="searchHint">「网络检索」拿的是公开网页上的线索，抽到的答案会标成「疑似」，请核对后再输入。</div>
+          <div class="list" id="searchResult"></div>
+          <div class="pane-foot">
+            <button class="mini" id="saveBankBtn" title="把当前题目和大框里的答案存进本地题库">题目+大框答案存题库</button>
+            <span class="spacer"></span>
+            <button class="mini" id="bankManageBtn">题库管理</button>
+          </div>
+        </div>
+
+        <!-- ============ 答案队列 ============ -->
         <div class="pane" data-pane="queue">
           <div class="pane-head">
             <label class="switch small" id="queueModeSwitch">
@@ -103,6 +138,7 @@
           </div>
         </div>
 
+        <!-- ============ 历史 ============ -->
         <div class="pane" data-pane="history" hidden>
           <div class="pane-head">
             <span>最近输入过的内容</span>
@@ -114,6 +150,7 @@
           <div class="list" id="historyList"></div>
         </div>
 
+        <!-- ============ 设置 ============ -->
         <div class="pane" data-pane="settings" hidden>
           <div class="setgroup">
             <div class="setgroup-title">触发与输入</div>
@@ -133,6 +170,34 @@
               <span>完成时提示音</span>
               <span class="switch small"><input type="checkbox" id="beepChk"><span class="track"><span class="knob"></span></span></span>
             </label>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">搜答案</div>
+            <label class="row"><span>搜索引擎</span><select id="searchEngineSel"></select></label>
+            <label class="row"><span>本地题库命中阈值</span><select id="searchScoreSel"></select></label>
+            <label class="row"><span>候选条数</span><select id="searchTopSel"></select></label>
+            <label class="row"><span>网络请求超时</span><select id="searchTimeoutSel"></select></label>
+            <label class="row"><span>搜题热键（剪贴板取题）</span><select id="hotkeySearchSel"></select></label>
+            <label class="row switchrow" id="searchAutoFillRow">
+              <span>高可信答案自动填进大框</span>
+              <span class="switch small"><input type="checkbox" id="searchAutoFillChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <div class="hint" id="searchEngineState"></div>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">AI 解答（可选）</div>
+            <div class="hint">填一个 OpenAI 兼容接口即可。DeepSeek / 通义 / Kimi / 智谱 / OpenAI / 本机 Ollama 都走同一套协议。不填也能用本地题库和网络检索。</div>
+            <label class="col"><span class="muted">接口地址</span><input type="text" id="aiBaseUrlInp" spellcheck="false" placeholder="https://api.deepseek.com/v1"></label>
+            <label class="col"><span class="muted">模型名</span><input type="text" id="aiModelInp" spellcheck="false" placeholder="deepseek-chat"></label>
+            <label class="col"><span class="muted">API Key</span><input type="password" id="aiKeyInp" spellcheck="false" placeholder="留空表示不改动已保存的密钥"></label>
+            <div class="row-ops">
+              <button class="mini" id="aiSaveKeyBtn">保存密钥</button>
+              <button class="mini" id="aiClearKeyBtn">清除密钥</button>
+              <button class="mini" id="aiTestBtn">测试连接</button>
+            </div>
+            <div class="hint" id="aiKeyState"></div>
           </div>
 
           <div class="setgroup">
@@ -190,6 +255,42 @@
 
   <div class="toasts" id="toasts"></div>
 </div>
+
+<!-- ============ 题库管理弹窗 ============ -->
+<div class="modal-wrap" id="bankModal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <strong>题库管理</strong>
+      <span class="muted" id="bankCount"></span>
+      <span class="spacer"></span>
+      <button class="mini" id="bankCloseBtn">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div class="setgroup">
+        <div class="setgroup-title">批量导入</div>
+        <div class="hint">每行一条，格式 <code>题目 || 答案</code>（也支持 <code>|</code>、Tab、<code>===</code> 分隔）。题目重复时会自动合并、覆盖旧答案。</div>
+        <textarea id="bankBulk" class="qbox small" spellcheck="false"
+          placeholder="已知a+b=3，ab=2，则a²+b²的值为（ ） || 5&#10;三角形内角和是多少度 || 180°"></textarea>
+        <div class="row-ops">
+          <button class="mini" id="bankImportBtn">导入上面的内容</button>
+          <button class="mini" id="bankImportFileBtn">从文件导入…</button>
+          <button class="mini" id="bankExportBtn">导出到文件…</button>
+          <span class="spacer"></span>
+          <button class="mini danger" id="bankClearBtn">清空题库</button>
+        </div>
+      </div>
+      <div class="setgroup bank-list-group">
+        <div class="setgroup-title">
+          <span>已有条目</span>
+          <span class="spacer"></span>
+          <input type="text" id="bankSearchInp" class="bank-filter" placeholder="筛选…" spellcheck="false">
+        </div>
+        <div class="list" id="bankList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="js/app.js"></script>
 </body>
 </html>

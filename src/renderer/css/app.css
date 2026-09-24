@@ -80,7 +80,7 @@ kbd {
 .brand-sub { color: var(--ink-2); font-size: 11px; }
 .topbar-actions { -webkit-app-region: no-drag; margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
-.body { display: grid; grid-template-columns: 1fr 344px; min-height: 0; }
+.body { display: grid; grid-template-columns: 1fr 400px; min-height: 0; }
 
 /* ================= 左侧主区 ================= */
 .composer {
@@ -180,12 +180,12 @@ kbd {
   padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit;
 }
 .ghost-btn:hover { border-color: var(--accent); color: var(--accent); }
-select, input[type="text"] {
+select, input[type="text"], input[type="password"] {
   background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px;
   padding: 5px 8px; font-family: inherit; font-size: 12px; outline: none;
 }
-select:focus, input[type="text"]:focus { border-color: var(--accent); }
+select:focus, input[type="text"]:focus, input[type="password"]:focus { border-color: var(--accent); }
 .ghost-select { -webkit-app-region: no-drag; }
 
 .autorow {
@@ -313,6 +313,115 @@ select:focus, input[type="text"]:focus { border-color: var(--accent); }
 .toast.warn { border-left-color: var(--warn); }
 .toast.error { border-left-color: var(--err); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ================= 搜答案面板 ================= */
+.pane > .row-ops,
+.pane > .search-src,
+.pane > .primary.slim,
+.pane > .search-errors { flex: 0 0 auto; }
+
+.qbox {
+  flex: 0 0 auto; width: 100%; min-height: 76px; max-height: 160px; resize: vertical;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px;
+  padding: 8px 10px; outline: none;
+  font: 12.5px/1.6 "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+.qbox:focus { border-color: var(--accent); }
+.qbox.small { min-height: 62px; }
+.qbox::placeholder { color: var(--ink-2); opacity: .8; }
+
+.search-src { display: flex; gap: 12px; flex-wrap: wrap; }
+.chk {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--ink-2); cursor: pointer; user-select: none;
+}
+.chk input { margin: 0; cursor: pointer; accent-color: var(--accent); }
+
+.primary.slim { min-height: 38px; font-size: 14px; border-radius: 10px; }
+.primary.slim kbd { background: rgba(255, 255, 255, .22); }
+
+.ritem {
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px; display: flex; flex-direction: column; gap: 5px;
+}
+.ritem.best { border-color: var(--accent); }
+.ritem-top { display: flex; align-items: center; gap: 6px; overflow: hidden; }
+.ritem-top .score { margin-left: auto; }
+.badge {
+  font-size: 10.5px; line-height: 1.6; border-radius: 999px; padding: 0 7px;
+  border: 1px solid var(--line); color: var(--ink-2); background: var(--panel);
+  white-space: nowrap; flex: 0 0 auto; max-width: 46%;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.badge.local { color: var(--ok); border-color: var(--ok); }
+.badge.ai { color: var(--accent); border-color: var(--accent); }
+.badge.web { color: var(--warn); border-color: var(--warn); }
+.badge.suspect { color: var(--warn); border-color: var(--warn); border-style: dashed; }
+.score { font-size: 11px; font-weight: 700; color: var(--ink-2); white-space: nowrap; }
+.score.hi { color: var(--ok); }
+.ritem-answer {
+  font-size: 13.5px; font-weight: 600; color: var(--ink);
+  word-break: break-word; white-space: pre-wrap;
+  max-height: 130px; overflow: auto;
+  background: var(--panel); border: 1px dashed var(--line); border-radius: 7px; padding: 6px 8px;
+}
+.ritem-detail {
+  font-size: 11.5px; color: var(--ink-2); word-break: break-word; white-space: pre-wrap;
+  max-height: 96px; overflow: auto;
+}
+.ritem-title { font-size: 12px; color: var(--ink); word-break: break-word; }
+.ritem-snip {
+  font-size: 11.5px; color: var(--ink-2); word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ritem-url { font-size: 10.5px; color: var(--ink-2); word-break: break-all; opacity: .85; }
+.search-errors {
+  font-size: 11px; color: var(--warn); background: var(--panel-2);
+  border: 1px dashed var(--line); border-radius: 8px; padding: 6px 8px; line-height: 1.6;
+  word-break: break-word;
+}
+code {
+  font-family: "Consolas", "Cascadia Mono", monospace; font-size: 11px;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 4px; padding: 0 3px;
+}
+
+/* ================= 题库管理弹窗 ================= */
+.modal-wrap {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 20, 27, .42);
+}
+.modal-wrap[hidden] { display: none; }
+.modal {
+  width: min(680px, calc(100vw - 48px));
+  height: min(580px, calc(100vh - 72px));
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .28);
+  overflow: hidden;
+}
+.modal-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
+}
+.modal-body {
+  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 14px; overflow-y: auto;
+}
+.bank-list-group { flex: 1 1 auto; min-height: 190px; }
+.bank-list-group .list { min-height: 140px; }
+.bank-filter { width: 140px; }
+.bank-item { display: flex; align-items: flex-start; gap: 8px; }
+.bank-item .bank-texts { flex: 1 1 auto; min-width: 0; }
+.bank-q { font-size: 12px; color: var(--ink); word-break: break-word; }
+.bank-a { font-size: 12px; color: var(--ok); word-break: break-word; margin-top: 2px; }
+.bank-meta { font-size: 10.5px; color: var(--ink-2); margin-top: 2px; }
+
+/* 提示条要压在弹窗之上，否则弹窗打开时看不到提示 */
+.toasts { z-index: 80; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }

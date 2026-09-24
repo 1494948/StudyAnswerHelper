@@ -1,21 +1,29 @@
 # 学习通答题助手 · StudyAnswerHelper
 
-> 左边一个大框，答案写进去；切到学习通，按一下热键，答案就自己一个字一个字"打"进答题框。
+> 题目进去，答案出来。搜到之后，答案自己一个字一个字"打"进学习通答题框。
 >
-> A big input box for your answers. Switch to Xuexitong (Chaoxing), press one hotkey, and the answer types itself into the answer field character by character.
+> Paste a question, get an answer — then the answer types itself into the Xuexitong (Chaoxing) answer field, character by character.
 
 **[中文说明](#中文说明) ｜ [English](#english)**
 
+![搜答案](preview/main-search.png)
+
+<details open>
+<summary><b>其他界面截图（点开看：答案队列 / 题库管理 / 历史 / 设置 / 深色主题）</b></summary>
+
+**答案队列** —— 大框写答案，按一个热键逐字输入，不碰剪贴板
+
 ![主界面](preview/main-queue.png)
 
-<details>
-<summary><b>更多界面截图（点开看：历史记录 / 设置 / 深色主题）</b></summary>
+**题库管理** —— 把标准答案攒起来，下次同题离线秒出；支持批量粘贴导入和 JSON 导入导出
+
+![题库管理](preview/modal-bank.png)
 
 **输入历史** —— 每次成功输入的内容自动留档，可一键回填
 
 ![历史记录](preview/main-history.png)
 
-**设置** —— 热键、自动模式倒计时、逐字速度、窗口识别名单
+**设置** —— 热键、自动模式倒计时、逐字速度、搜答案、AI 接口、窗口识别名单
 
 ![设置](preview/main-settings.png)
 
@@ -56,6 +64,7 @@
 ### 功能
 
 - **大输入框**：整个左半屏都是输入区，可以直接 `Ctrl+V` 粘贴整段答案，自动保存草稿（关掉程序也不丢）
+- **搜答案（v1.1.0 新增）**：贴一道题进去，三路答案来源同时开工 —— 见下节
 - **全局热键触发**：默认 `Ctrl + Alt + Enter`，在**任何**窗口下都生效，不需要先点回本程序
 - **自动模式**：打开开关后，只要切到学习通窗口，倒计时 3 秒就自动输入（按 `Esc` 随时取消）
 - **答案队列 + 顺序输入**：把多道题的答案预存成队列，每按一次 `Ctrl + Alt + ↓` 自动装下一条，适合连着一大批题往下录
@@ -67,14 +76,42 @@
 - **托盘常驻**：关闭窗口不退出，缩在系统托盘里随时待命；双击托盘图标回来
 - **浅色 / 深色主题**，跟随系统
 
+### 搜答案：题目进去，答案出来
+
+学习通上常常只有题目、没有答案。这个功能就是补上这一步：**把题目贴进来，它去帮你找答案，找到就一键填进大框。**
+
+三路答案来源，同时开工，谁先有结果一起汇总排序（也可以单独关掉某一路）：
+
+| 来源 | 怎么工作 | 需要什么 | 特点 |
+|---|---|---|---|
+| **本地题库** | 和你自己攒的题库做模糊匹配（字符相似度 + 数字特征 + 运算符特征） | 什么都不需要 | 离线、瞬时、**准确率 100%**（答案是你自己录的）。用得越多越好用 |
+| **网络检索** | 在搜狗 / 360 / 必应上搜题干，抓取结果页，再从标题摘要里抽取疑似答案 | 需要联网 | 不用配任何 Key。返回的主要是**线索**（题干常常就在结果标题里，点开就能看解析） |
+| **AI 解答** | 调一个 OpenAI 兼容接口（DeepSeek / 通义 / Kimi / 智谱 / OpenAI / 本机 Ollama 都行） | 需要一个 API Key | **数学题最靠得住**，会给答案 + 简要解析。不填也能用前两路 |
+
+**怎么用：**
+
+1. 在学习通里选中题目 → `Ctrl+C` 复制
+2. 按 `Ctrl + Alt + F`（搜题热键）—— 助手会自动跳到前台，拿剪贴板里的题目开搜
+3. 结果排在右边：**本地题库 `100%`** 的会自动填进大框；网络线索点「打开网页」看原题解析；AI 的可以「答案+解析」一起填
+4. 回到学习通，按 `Ctrl + Alt + Enter` 输入
+
+不想记热键也行：切到右边「搜答案」标签页，把题目贴进题目框，点「搜答案」。
+
+**几个必须说清楚的点：**
+
+- **网络检索抽到的答案会标成「疑似请核对」**，请务必对一下再输入。搜索引擎给的是公开网页上的线索，不是权威答案。
+- 搜索引擎短时间内被问太频繁会弹**人机验证页**。程序能识别这种情况，会**自动换下一个引擎**，并在设置页提示哪个引擎正在冷却。真遇到持续失败，隔几分钟再试。
+- 觉得某道题的答案靠谱，点「存入题库」，下次这道题就是**离线秒出**了。
+- 题库支持批量导入：题库管理 → 粘贴 `题目 || 答案`，一行一条。
+
 ### 下载与安装
 
 到本仓库的 [Releases](../../releases) 页面下载，两个文件选一个：
 
 | 文件 | 说明 |
 |---|---|
-| `StudyAnswerHelper-Setup-1.0.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
-| `StudyAnswerHelper-Portable-1.0.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
+| `StudyAnswerHelper-Setup-1.1.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
+| `StudyAnswerHelper-Portable-1.1.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
 
 > **Windows 会弹"已保护你的电脑"（SmartScreen）**
 > 这是正常的：本程序没有购买代码签名证书（一年几百到几千元），Windows 对没有签名的程序一律拦一下。
@@ -119,9 +156,33 @@
 **Q：识别不到学习通窗口？**
 默认名单是按学习通官方客户端和网页版配的。如果学校用的是定制客户端，切到那个窗口，点界面上「加入识别名单」按钮，把它的标题和进程名加进去即可。
 
+**Q：搜答案搜不到东西？**
+按顺序排查：
+
+1. **看右边的错误提示。** 程序会把每一路来源的失败原因原样显示出来，比如"搜狗：触发了人机验证，已自动改用其他来源"。
+2. **是不是被搜索引擎限流了。** 一分钟内连搜十几道题，搜狗会弹人机验证页。程序会临时跳过它、自动改用 360 / 必应，设置页会显示哪个引擎在冷却（默认冷却 3 分钟）。
+3. **题干有没有带选项。** 程序会自动把 `A. B. C. D.` 剔掉再搜（选项会干扰检索）。如果题目是图片，得先把文字打出来或复制出来。
+4. **换个写法。** 题干太长时可以只留关键条件部分；搜狗对"完整题干"最敏感。
+5. **配一个 AI 接口**，数学题这一步最稳（见「搜答案」一节的表格）。
+
+**Q：网络检索给的答案是错的 / 不完整？**
+网络检索拿的是**公开网页的线索**，不是权威答案。程序只做了两件事：按相关度排序、从标题摘要里抽可能含答案的片段，抽到的都会打上「疑似请核对」标签。**请务必自己看一眼再输入。** 想要稳定的正确答案，请用「本地题库」（自己录）或「AI 解答」。
+
+**Q：搜答案联网吗？会上传我的东西吗？**
+- **只在「网络检索」打勾时联网**，请求内容只有**题干文本**（会先剔除选项和多余空白），发给搜狗 / 360 / 必应。除此之外不发送任何东西 —— 不会上传你的答案、历史、题库。
+- **「本地题库」完全离线**，不产生任何网络请求。
+- **「AI 解答」只在你填了 Key 并打勾时才调用**，请求内容同样是题干文本 + 一段固定提示词。
+- 关掉「网络检索」和「AI 解答」两个勾，程序就是纯离线的。
+
 **Q：数据存在哪？**
-`%APPDATA%\学习通答题助手\answer-data.json`（纯文本 JSON，可以直接看、可以备份）。
-点「设置 → 打开数据文件夹」直接跳过去。卸载时不会删除这个文件。
+- 草稿 / 队列 / 历史 / 设置：`%APPDATA%\学习通答题助手\answer-data.json`
+- 本地题库：`%APPDATA%\学习通答题助手\answer-bank.json`
+
+都是纯文本 JSON，可以直接看、可以备份。点「设置 → 打开数据文件夹」直接跳过去。卸载时不会删除这两个文件。
+
+> **AI 的 API Key 以明文存在 `answer-data.json` 里**（不加密）。程序只在主进程内使用它，
+> **不会把它推给界面进程**（自检里有专门一条断言守着），但它确实躺在你的磁盘上 ——
+> 共享这台电脑或导出发送数据文件夹前请留意。不想留就点「设置 → 清除密钥」。
 
 **Q：杀毒软件报毒？**
 Electron 应用 + 全局键盘钩子 + 模拟按键，这几个特征叠加起来很容易触发启发式误报。源码全部公开，可自行审计或自行编译（见下文）。
@@ -131,11 +192,25 @@ Electron 应用 + 全局键盘钩子 + 模拟按键，这几个特征叠加起�
 ```
 Electron 主进程 ──IPC──> 渲染进程（界面）
       │
-      └── fork 子进程 ──> koffi(FFI) ──> Win32 API
-                                        ├─ GetForegroundWindow / GetWindowTextW  读前台窗口
-                                        ├─ QueryFullProcessImageNameW            读进程名
-                                        └─ SendInput + KEYEVENTF_UNICODE         逐字输入
+      ├── fork 子进程 ──> koffi(FFI) ──> Win32 API
+      │                                  ├─ GetForegroundWindow / GetWindowTextW  读前台窗口
+      │                                  ├─ QueryFullProcessImageNameW            读进程名
+      │                                  └─ SendInput + KEYEVENTF_UNICODE         逐字输入
+      │
+      └── lib/answer-search.js ──┬─ lib/answer-bank.js     本地题库（JSON + 模糊匹配）
+                                 ├─ lib/http.js            零依赖 HTTP（搜狗 / 360 / 必应）
+                                 └─ lib/textsim.js         归一化 / 相似度 / 答案解析
 ```
+
+**搜答案的三个技术要点（都是踩过坑才定下来的）：**
+
+- **判"是不是同一道题"不能用普通文本相似度。** 只算字符 bigram 相似度的话，`a+b=3` 和 `a-b=3` 相似度高达 0.87、数字特征还完全一致，会被判成同一道题 —— 数学题里"只差一个符号"恰恰是**完全不同的题**。所以除了 bigram 和数字序列，还加了**运算符特征**，并且设了一条硬规则：归一化后长度相同、差异只有 1~2 个字符、且差异落在运算符或数字上 → 直接判定为不同题。
+- **归一化不能删标点。** 普通文本相似度预处理会把标点全去掉，但 `+ - = . / ( ) ² √ π` 在数学题里全是有效信息，删了 `a+b=3` 和 `a-b=3` 会压成同一个串。
+- **网页摘要不能整段比对。** 题干十几个字、摘要三四百字，直接比会被摊薄到 0.2 左右，排名就没法看了。所以对"标题""摘要开头""整段"各算一次取最大值 —— 题库站的标题往往就是题干原文。
+
+**零第三方依赖**：HTTP 客户端基于 Node 内置 `http/https/zlib` 自己写（含重定向跟随、超时、gzip/deflate/br 解压、响应体上限）；HTML 解析用正则 + 实体解码，不引 DOM 库；题库就是一个 JSON 文件。整个项目除 `electron` 和 `koffi` 外没有运行时依赖。
+
+**搜索引擎适配**：搜狗（中文题库命中率最高）→ 360（更抗限流，且结果页直接给出真实 URL，不必解跳转）→ 必应（兜底）。依次尝试，第一个能解析出结果的即采用；撞上人机验证页的引擎会被临时冷却并自动跳过。
 
 几个刻意的设计决定：
 
@@ -160,7 +235,7 @@ npm run start:safe
 # 3. 生成图标（改过 tools/make-icons.js 之后执行）
 npm run icons
 
-# 4. 打包成 exe（产物在 dist-installer-v1/）
+# 4. 打包成 exe（产物在 dist-installer-v4/）
 npm run build
 ```
 
@@ -171,7 +246,7 @@ npm config set registry https://registry.npmmirror.com
 ```
 
 > 重复打包时建议换一个输出目录，免得清理旧目录失败：
-> `npx electron-builder --win --config.directories.output=dist-installer-v2`
+> `npx electron-builder --win --config.directories.output=dist-installer-v5`
 
 ### 上传到你自己的 GitHub 仓库
 
@@ -186,18 +261,18 @@ npm config set registry https://registry.npmmirror.com
 ```bash
 git init
 git add .
-git commit -m "学习通答题助手 v1.0.0：源码"
+git commit -m "学习通答题助手 v1.1.0：源码"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
 
 # 再发布 Release（需要先安装 GitHub CLI：https://cli.github.com/）
-gh release create v1.0.0 \
-  "release/StudyAnswerHelper-Setup-1.0.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.0.0.exe" \
+gh release create v1.1.0 \
+  "release/StudyAnswerHelper-Setup-1.1.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.1.0.exe" \
   "release/使用说明.txt" \
-  --title "学习通答题助手 v1.0.0" \
-  --notes "首次发布"
+  --title "学习通答题助手 v1.1.0" \
+  --notes "新增搜答案：本地题库 / 网络检索 / AI 解答"
 ```
 
 README 里的下载链接用的是相对路径 `../../releases`，所以走 Releases 时链接直接就通。
@@ -210,7 +285,7 @@ README 里的下载链接用的是相对路径 `../../releases`，所以走 Rele
 # 先删掉 .gitignore 里 "release/" 这一行
 git init
 git add .            # 删掉那行之后，exe 才会被一起提交
-git commit -m "学习通答题助手 v1.0.0（含 exe）"
+git commit -m "学习通答题助手 v1.1.0（含 exe）"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
@@ -226,20 +301,22 @@ git push -u origin main
 
 ### 自动化自检
 
-这个项目配了三套自动验证，改完代码建议跑一遍：
+这个项目配了四套自动验证，改完代码建议跑一遍：
 
 | 环境变量 | 作用 |
 |---|---|
-| `SP_SELFTEST=1` | **交互级自检**：在真实渲染进程里断言 20 项，包括用 `elementFromPoint` 验证"按钮是不是真的点得到"（程序化 `click()` 会绕过层级遮挡判定，掩盖真实缺陷） |
+| `SP_SELFTEST=1` | **交互级自检**：在真实渲染进程里断言 32 项，包括用 `elementFromPoint` 验证"按钮是不是真的点得到"（程序化 `click()` 会绕过层级遮挡判定，掩盖真实缺陷）、搜答案的离线闭环、题库弹窗、以及一条"API Key 不许出主进程"的安全断言 |
 | `SP_SMOKE=1` | **真实键盘注入**：开一个标题为「学习通」的测试窗口，用真正的 `SendInput` 把 `数学答案：√3 + 1/2 ≈ 1.366` 打进去，再读回来逐字比对 |
-| `SP_SHOT=1` | **界面截图走查**：把三个页面 × 两套主题截成 PNG 放到 `preview/` |
+| `SP_SHOT=1` | **界面截图走查**：把五个页面 × 两套主题截成 PNG 放到 `preview/`（用现造的演示数据，不会截进真实答案） |
+| `SP_SEARCHTEST=1` | **真实检索链路**：联网实跑一次三源检索，把候选与错误原样写进日志。**故意和自检分开** —— 自检必须离线可复现，而这条链路依赖外部搜索引擎 |
 
-v1.0.0 打包产物的实测结果（开发态与打包后的 exe 各跑一遍，结果一致）：
+v1.1.0 打包产物的实测结果（开发态与打包后的 exe 各跑一遍，结果一致）：
 
 ```
-SP_SELFTEST   20 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+SP_SELFTEST   32 项通过 / 0 项失败 / 0 个渲染层 JS 错误
 SP_SMOKE       5 项通过 / 0 项失败
-              窗口识别命中 → 键盘注入完全一致（21 字 / 465 ms）
+              窗口识别命中 → 键盘注入完全一致（21 字 / 451 ms）
+SP_SEARCHTEST 本地题库命中 1.000 并自动填入大框；搜狗返回 9 条线索，头名相关度 0.905
 ```
 
 ```bash
@@ -252,13 +329,22 @@ $env:SP_SMOKE = "1"
 
 ### 数据与隐私
 
-- **完全离线**。程序不联网，不发任何请求，没有埋点，没有账号体系。
-- 你的答案只存在本机 `%APPDATA%\学习通答题助手\answer-data.json` 里。
-- 程序不使用剪贴板，只读取前台窗口的**标题和进程名**用于判断"是不是学习通"，不读取窗口内容、不截屏、不记录按键。
+- **默认完全离线**。程序只在「搜索答案 → 网络检索 / AI 解答」打勾时才联网，且只把**题干文本**发出去。
+- 你的答案、题库、历史只存在本机：
+  - `%APPDATA%\学习通答题助手\answer-data.json`（草稿 / 队列 / 历史 / 设置）
+  - `%APPDATA%\学习通答题助手\answer-bank.json`（本地题库）
+- 没有埋点、没有账号体系、不做任何遥测。
+- 程序不读取剪贴板之外的内容，只读取前台窗口的**标题和进程名**用于判断"是不是学习通"，不读取窗口内容、不截屏、不记录按键。
+- 剪贴板**只在两个地方被读取**：你主动点「读剪贴板」按钮，或按搜题热键。其余时间一律不碰。
+- AI 的 API Key 以明文存在 `answer-data.json` 里，且**只在主进程内使用**（自检里有专门断言：状态推送到界面前必须脱敏）。共享电脑或导出发送数据文件夹前请留意，不想留就点「清除密钥」。
 
 ### 免责声明
 
-本工具的作用是**减少重复性的手工录入操作**，本身不产生内容、不提供答案、不绕过任何考试或作业机制。它替代的是你的手，不是你的判断。
+本工具的作用是**减少重复性的手工录入操作**，不绕过任何考试或作业机制。
+
+v1.1.0 起它还能帮你**检索题目答案**，但检索结果来自公开网页，或来自你自己配置的 AI 模型 ——
+**只是参考线索，不保证正确**。程序会把从网页抽到的答案标成「疑似请核对」，
+请务必自行判断后再录入。**它替代的是你的手和你的检索动作，不是你的判断。**
 
 请在你**有权录入内容**的场景下使用（例如教师录入标准答案、录入自己已完成的答案、整理教学材料）。请遵守你所在学校关于学习平台的使用规定。使用者需自行承担因使用不当而产生的全部后果。
 
@@ -297,6 +383,7 @@ This project does **no screen recognition**. It takes two sturdier routes instea
 ### Features
 
 - **Large input box** — half the window is the input area. Paste a whole answer with `Ctrl+V`; the draft is auto-saved and survives a restart.
+- **Answer search (new in v1.1.0)** — paste a question, and three answer sources fire at once. See the next section.
 - **Global hotkey** — default `Ctrl + Alt + Enter`, works from **any** window, no need to click back into this app first.
 - **Auto mode** — flip the switch and simply switching to the Xuexitong window starts a 3-second countdown and then types. Press `Esc` to cancel.
 - **Answer queue with sequential entry** — pre-store answers for many questions; each press of `Ctrl + Alt + ↓` loads the next one. Built for working through a long list.
@@ -308,14 +395,42 @@ This project does **no screen recognition**. It takes two sturdier routes instea
 - **Lives in the tray** — closing the window keeps the app running in the system tray; double-click the tray icon to bring it back.
 - **Light / dark theme**, following the system setting.
 
+### Answer search: question in, answer out
+
+Xuexitong assignments frequently contain questions but no answers. This closes that gap: **paste the question, it goes and finds the answer, and one click puts it in the big box.**
+
+Three sources run concurrently; results are merged and ranked together (each can be switched off individually):
+
+| Source | How it works | Requirements | Notes |
+|---|---|---|---|
+| **Local bank** | Fuzzy-matches against a question bank you build up (character similarity + numeric features + operator features) | Nothing | Offline, instant, **100% accurate** — because you entered the answers. Gets better the more you use it. |
+| **Web search** | Searches Sogou / 360 / Bing for the question text, fetches the result pages and extracts candidate answers | Internet | No API key needed. Mostly returns **leads** — the question text is often right there in the result title, click through for the worked solution. |
+| **AI answer** | Calls any OpenAI-compatible endpoint (DeepSeek / Qwen / Kimi / Zhipu / OpenAI / local Ollama) | Your own API key | **Most reliable for maths.** Returns the answer plus brief working. Optional. |
+
+**How to use it:**
+
+1. Select the question in Xuexitong → `Ctrl+C`
+2. Press `Ctrl + Alt + F` (the search hotkey) — the helper comes to the front and searches the clipboard
+3. Results appear on the right: a `100%` local-bank hit fills the box automatically; web leads have an "Open page" button; AI results can be inserted as "answer + working"
+4. Switch back to Xuexitong and press `Ctrl + Alt + Enter`
+
+You can also skip the hotkey: open the "搜答案" tab, paste the question, click "搜答案".
+
+**Things you should know:**
+
+- **Answers extracted from the web are labelled "疑似请核对" (suspected — please verify).** Always check them. A search engine returns leads from public pages, not authoritative answers.
+- Search engines rate-limit. Ask too many questions in a minute and Sogou serves a CAPTCHA. The app detects this, **automatically falls back to the next engine**, and shows which engine is cooling down on the Settings page.
+- Happy with an answer? Click "存入题库" and that question becomes an instant offline hit next time.
+- The bank supports bulk import: Bank management → paste `question || answer`, one per line.
+
 ### Download and install
 
 Grab one of the two files from this repository's [Releases](../../releases) page:
 
 | File | Description |
 |---|---|
-| `StudyAnswerHelper-Setup-1.0.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
-| `StudyAnswerHelper-Portable-1.0.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
+| `StudyAnswerHelper-Setup-1.1.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
+| `StudyAnswerHelper-Portable-1.1.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
 
 > **Windows SmartScreen will warn you.** This is expected: the app is not code-signed (a certificate costs hundreds to thousands per year), and Windows blocks unsigned binaries by default. Click "More info" → "Run anyway". The full source is in this repository — audit it, or build it yourself.
 
@@ -354,8 +469,34 @@ Clipboard pasting **overwrites whatever was in your clipboard**, and many answer
 **It does not recognise my Xuexitong window.**
 The default list covers the official client and web version. For a school-specific client, switch to that window and click "Add current window to match list".
 
+**Answer search returns nothing.**
+Work through these in order:
+
+1. **Read the error messages on the right.** Every source reports its own failure verbatim, e.g. "搜狗：触发了人机验证（短时间内检索太频繁），已自动改用其他来源".
+2. **You may be rate-limited.** A dozen searches in a minute gets you a CAPTCHA from Sogou. The app temporarily skips it and falls back to 360 / Bing; the Settings page shows which engine is cooling down (3 minutes by default).
+3. **Did the question include its options?** The app strips `A. B. C. D.` before searching (options hurt retrieval). If the question is an image, you need to get the text out first.
+4. **Rephrase.** For a very long question, keep only the key conditions; Sogou is most sensitive to the full text.
+5. **Configure an AI endpoint** — the most reliable route for maths (see the table above).
+
+**The answer from web search is wrong or incomplete.**
+Web search returns **leads from public pages**, not authoritative answers. The app only ranks them by relevance and extracts candidate snippets, and every extracted answer is tagged "疑似请核对". **Always eyeball it before inserting.** For dependable answers use the local bank (your own entries) or the AI source.
+
+**Does answer search send anything out?**
+- It only goes online when **Web search** or **AI answer** is ticked, and the only thing sent is the **question text** (options and redundant whitespace stripped) — to Sogou / 360 / Bing.
+- It never uploads your answers, history, or bank.
+- The **local bank is fully offline** and makes no network requests at all.
+- Untick both boxes and the app is entirely offline.
+
 **Where is my data?**
-`%APPDATA%\学习通答题助手\answer-data.json` — plain JSON, readable and backup-friendly. Settings → "Open data folder" jumps there. Uninstalling keeps the file.
+- Draft / queue / history / settings: `%APPDATA%\学习通答题助手\answer-data.json`
+- Local question bank: `%APPDATA%\学习通答题助手\answer-bank.json`
+
+Both are plain JSON — readable and backup-friendly. Settings → "Open data folder" jumps there. Uninstalling keeps them.
+
+> **The AI API key is stored in plain text inside `answer-data.json`** (unencrypted). It is only ever
+> used in the main process and is **never forwarded to the renderer** (a dedicated self-test assertion
+> guards this), but it does sit on your disk — keep that in mind on a shared machine or before sharing
+> your data folder. Use "Clear key" to remove it.
 
 **My antivirus flags it.**
 An Electron app plus global keyboard hooks plus synthetic input is a textbook combination for heuristic false positives. The source is entirely open — audit it, or build it yourself.
@@ -365,11 +506,25 @@ An Electron app plus global keyboard hooks plus synthetic input is a textbook co
 ```
 Electron main process ──IPC──> renderer (UI)
       │
-      └── fork child process ──> koffi (FFI) ──> Win32 API
-                                                 ├─ GetForegroundWindow / GetWindowTextW  read foreground window
-                                                 ├─ QueryFullProcessImageNameW            read process name
-                                                 └─ SendInput + KEYEVENTF_UNICODE         type characters
+      ├── fork child process ──> koffi (FFI) ──> Win32 API
+      │                                           ├─ GetForegroundWindow / GetWindowTextW  read foreground window
+      │                                           ├─ QueryFullProcessImageNameW            read process name
+      │                                           └─ SendInput + KEYEVENTF_UNICODE         type characters
+      │
+      └── lib/answer-search.js ──┬─ lib/answer-bank.js     local question bank (JSON + fuzzy match)
+                                 ├─ lib/http.js            zero-dep HTTP (Sogou / 360 / Bing)
+                                 └─ lib/textsim.js         normalisation / similarity / answer extraction
 ```
+
+**Three things that shaped the search implementation:**
+
+- **You cannot compare maths questions with plain text similarity.** Pure character-bigram similarity rates `a+b=3` and `a-b=3` at 0.87 with identical numeric features, so one gets mistaken for the other — and in maths, "one symbol different" *is a different question*. So on top of bigrams and number sequences there is an **operator feature**, plus a hard rule: same normalised length, differing in only 1–2 characters, and those characters are operators or digits → treat as different questions.
+- **Normalisation must not strip punctuation.** Text similarity pipelines usually drop all punctuation, but `+ - = . / ( ) ² √ π` are all meaningful in maths; strip them and `a+b=3` and `a-b=3` collapse into the same string.
+- **You cannot compare a question against a whole snippet.** The question is a dozen characters, the snippet three or four hundred; direct comparison dilutes the score to around 0.2 and ranking becomes useless. So the title, the snippet head, and the full blob are each scored, and the maximum is taken — question-bank pages usually put the question verbatim in the title.
+
+**Zero third-party runtime dependencies**: the HTTP client is written against Node's built-in `http/https/zlib` (redirects, timeouts, gzip/deflate/br decompression, response size cap); HTML parsing is regex plus entity decoding, no DOM library; the question bank is a single JSON file. Apart from `electron` and `koffi`, there is nothing else.
+
+**Search engine adapters**: Sogou (best hit rate for Chinese question banks) → 360 (more resilient, and its result pages expose the real URL directly, no redirect to resolve) → Bing (fallback). They are tried in order and the first one that yields parseable results wins; any engine that serves a CAPTCHA page is put on a cooldown and skipped.
 
 A few deliberate choices:
 
@@ -387,11 +542,11 @@ npm install          # install dependencies
 npm start            # run in development
 npm run start:safe   # if the sandboxed/GPU-restricted environment fails to start
 npm run icons        # regenerate icons after editing tools/make-icons.js
-npm run build        # package into an exe (output in dist-installer-v1/)
+npm run build        # package into an exe (output in dist-installer-v4/)
 ```
 
 > For repeat builds, use a fresh output directory to avoid a failed cleanup of the old one:
-> `npx electron-builder --win --config.directories.output=dist-installer-v2`
+> `npx electron-builder --win --config.directories.output=dist-installer-v5`
 
 ### Publishing to your own GitHub repository
 
@@ -404,18 +559,18 @@ The finished binaries are in `release/`. Pick one of three routes.
 ```bash
 git init
 git add .
-git commit -m "StudyAnswerHelper v1.0.0: source"
+git commit -m "StudyAnswerHelper v1.1.0: source"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
 
 # then publish a release (requires the GitHub CLI: https://cli.github.com/)
-gh release create v1.0.0 \
-  "release/StudyAnswerHelper-Setup-1.0.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.0.0.exe" \
+gh release create v1.1.0 \
+  "release/StudyAnswerHelper-Setup-1.1.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.1.0.exe" \
   "release/使用说明.txt" \
-  --title "StudyAnswerHelper v1.0.0" \
-  --notes "First release"
+  --title "StudyAnswerHelper v1.1.0" \
+  --notes "Adds answer search: local bank / web search / AI"
 ```
 
 The download links in this README use the relative path `../../releases`, so they work out of the box with this route.
@@ -425,7 +580,7 @@ The download links in this README use the relative path `../../releases`, so the
 ```bash
 git init
 git add .            # release/ is not gitignored, so the exes are included
-git commit -m "StudyAnswerHelper v1.0.0 (with binaries)"
+git commit -m "StudyAnswerHelper v1.1.0 (with binaries)"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
@@ -438,20 +593,22 @@ git push -u origin main
 
 ### Automated verification
 
-Three self-check harnesses ship with the project. Run them after touching the code:
+Four self-check harnesses ship with the project. Run them after touching the code:
 
 | Env var | What it does |
 |---|---|
-| `SP_SELFTEST=1` | **Interaction-level self-test**: 20 assertions inside the real renderer, including `elementFromPoint` hit-testing for "can the user actually click this?" — programmatic `click()` bypasses stacking order and hides real defects. |
+| `SP_SELFTEST=1` | **Interaction-level self-test**: 32 assertions inside the real renderer, including `elementFromPoint` hit-testing for "can the user actually click this?" — programmatic `click()` bypasses stacking order and hides real defects — plus the offline answer-search loop, the question-bank modal, and a security assertion that the API key never reaches the renderer. |
 | `SP_SMOKE=1` | **Real keystroke injection**: opens a test window titled "学习通" and types `数学答案：√3 + 1/2 ≈ 1.366` with actual `SendInput`, then reads it back and compares character for character. |
-| `SP_SHOT=1` | **Visual walkthrough**: captures three pages × two themes into `preview/` as PNGs. |
+| `SP_SHOT=1` | **Visual walkthrough**: captures five pages × two themes into `preview/` as PNGs. Uses freshly generated demo data so real answers never end up in the screenshots. |
+| `SP_SEARCHTEST=1` | **Live search path**: runs one real three-source search and logs candidates and errors verbatim. Deliberately separate from the self-test — the self-test must be reproducible offline, whereas this path depends on third-party search engines. |
 
-Measured on the v1.0.0 artifacts (development tree and the packaged exe, same results):
+Measured on the v1.1.0 artifacts (development tree and the packaged exe, same results):
 
 ```
-SP_SELFTEST   20 passed / 0 failed / 0 renderer JS errors
+SP_SELFTEST   32 passed / 0 failed / 0 renderer JS errors
 SP_SMOKE       5 passed / 0 failed
-              window matched → keystroke injection byte-identical (21 chars / 465 ms)
+              window matched → keystroke injection byte-identical (21 chars / 451 ms)
+SP_SEARCHTEST local bank hit at 1.000 and auto-filled the box; Sogou returned 9 leads, top relevance 0.905
 ```
 
 ```powershell
@@ -463,13 +620,20 @@ $env:SP_SMOKE = "1"
 
 ### Data and privacy
 
-- **Fully offline.** No network calls, no telemetry, no accounts.
-- Your answers live only in `%APPDATA%\学习通答题助手\answer-data.json` on your own machine.
-- The app never uses the clipboard. It reads only the **title and process name** of the foreground window to decide "is this Xuexitong?" — never window contents, never screenshots, never keystrokes.
+- **Offline by default.** The app only goes online when "Web search" / "AI answer" is ticked, and the only thing it sends is the **question text**.
+- Your answers, bank and history live only on your own machine:
+  - `%APPDATA%\学习通答题助手\answer-data.json` (draft / queue / history / settings)
+  - `%APPDATA%\学习通答题助手\answer-bank.json` (local question bank)
+- No telemetry, no accounts, no analytics.
+- The clipboard is read in exactly two places: when you click "read clipboard", and when you press the search hotkey. Never otherwise.
+- The app reads only the **title and process name** of the foreground window to decide "is this Xuexitong?" — never window contents, never screenshots, never keystrokes.
+- The AI API key is stored in plain text in `answer-data.json` and used **only in the main process** — a self-test assertion guards that it is scrubbed before any state is pushed to the renderer. Use "Clear key" to remove it.
 
 ### Disclaimer
 
-This tool exists to **cut down repetitive manual entry**. It generates no content, supplies no answers, and circumvents no exam or assignment mechanism. It replaces your hands, not your judgement.
+This tool exists to **cut down repetitive manual entry**, and it circumvents no exam or assignment mechanism.
+
+Since v1.1.0 it can also **look up answers to a question** — but those results come from public web pages, or from an AI model you configure yourself. They are **leads only, not guaranteed correct**. Answers extracted from web pages are tagged "疑似请核对" (suspected — please verify). Always make your own call before entering anything. **It replaces your hands and your searching, not your judgement.**
 
 Use it where you **have the right to enter the content** — a teacher entering reference answers, entering answers you have already worked out yourself, or organising teaching material. Follow your institution's rules for its learning platform. Users bear full responsibility for any consequences of misuse.
 
