@@ -6,6 +6,11 @@
 
 **[中文说明](#中文说明) ｜ [English](#english)**
 
+> **只使用网页版学习通、且不装软件的老师，请用浏览器插件分支：
+> [study-answer-helper-web](https://github.com/1494948/study-answer-helper-web)**
+> 界面与功能与本项目一致，而且因为直接操作网页元素，读题更快、点选项更稳。
+> 本项目（桌面版）适合安装了学习通客户端、或需要在任意程序里用的人。
+
 ![搜答案](preview/main-search.png)
 
 <details open>
