@@ -18,7 +18,12 @@
     state: null, fg: null,
     auto: { active: false, remain: 0, why: '' },
     autoInput: { active: false, remain: 0, why: '', from: '', text: '', delaySec: 5 },
+    /* 演示预览的保护期（毫秒时间戳）；期间忽略被动的状态推送 */
+    autoInputPreviewUntil: 0,
     ocr: { active: false, at: 0, ms: 0, provider: '', engineLabel: '', attempts: [], errors: [], image: {}, warn: '' },
+    /* 学科识别与选择题点选（v1.3.0） */
+    subject: { subject: '', label: '', confidence: 0, override: '', options: [], isChoice: false, autoReasons: [], list: [] },
+    choice: { isChoice: false, options: [], letters: [], clickable: false, why: '', busy: false, lastOk: null, lastText: '', lastLetters: [] },
     question: '',
     themePref: 'system', tab: 'queue',
     search: { active: false, candidates: [], errors: [], count: 0, ms: 0, question: '', engine: '', bankCount: 0, engines: {} }
@@ -312,6 +317,10 @@
 
   /* ---------------- 渲染：自动输入倒计时 ---------------- */
   function renderAutoInput(st) {
+    /* 演示预览（自检与截图用）在被动的状态推送面前保持优先：
+       状态推送随时可能到来，若让它覆盖，倒计时浮层会在断言中途闪没。
+       真正的 autoinput 事件走的是 renderAutoInput(null)，不受这里限制。 */
+    if (st && H.autoInputPreviewUntil > Date.now()) return;
     const a = (st && st.autoInput) || H.autoInput || {};
     H.autoInput = Object.assign({}, H.autoInput, a);
     const box = $('autoInputOverlay');
@@ -323,6 +332,105 @@
     $('autoInputNum').textContent = String(H.autoInput.remain);
     $('autoInputFrom').textContent = H.autoInput.why ? ('来源：' + H.autoInput.why) : '';
     $('autoInputPreview').textContent = H.autoInput.text || '（空的）';
+  }
+
+  /* ---------------- 渲染：学科识别（v1.3.0） ---------------- */
+  /* 为什么要显示置信度：词法判断必然有失手的时候（比如语文文言文里夹着算式）。
+     把"它有多大把握"摆出来，用户才知道该不该动手改，而不是默默按错学科作答。 */
+  function renderSubject(st) {
+    const s = (st && st.subject) || H.subject || {};
+    H.subject = Object.assign({}, H.subject, s);
+
+    const chip = $('subjectChip');
+    const why = $('subjectWhy');
+    const has = !!H.subject.subject;
+    const conf = typeof H.subject.confidence === 'number' ? H.subject.confidence : 0;
+
+    if (!has) {
+      chip.textContent = '学科待定';
+      chip.className = 'chip none';
+    } else {
+      chip.textContent = H.subject.label + (H.subject.override ? '（手动）' : '');
+      chip.className = 'chip' + (!H.subject.override && conf < 0.35 ? ' low' : '');
+    }
+
+    const parts = [];
+    if (!has) {
+      parts.push('识别出题目后自动判断');
+    } else if (H.subject.override) {
+      parts.push('已手动指定，不再自动判断');
+    } else {
+      parts.push('置信度 ' + Math.round(conf * 100) + '%');
+      const rs = (H.subject.autoReasons || []).slice(0, 4);
+      if (rs.length) parts.push('依据：' + rs.join('、'));
+      if (H.subject.autoNote) parts.push(H.subject.autoNote);
+    }
+    why.textContent = parts.join(' · ');
+    why.title = parts.join('\n');
+
+    /* 两处下拉都要填：搜答案页的快捷切换 + 设置页的正式设置。
+       空值 = 回到自动识别。 */
+    const list = H.subject.list || [];
+    const map = { '': '自动识别' };
+    list.forEach((it) => { map[it.id] = it.label; });
+    ['subjectSel', 'subjectOverrideSel'].forEach((id) => {
+      const sel = $(id);
+      if (sel) fillSelect(sel, map, H.subject.override || '');
+    });
+  }
+
+  /* ---------------- 渲染：选择题点选（v1.3.0） ---------------- */
+  function renderChoice(st) {
+    const c = (st && st.choice) || H.choice || {};
+    H.choice = Object.assign({}, H.choice, c);
+
+    const btn = $('clickChoiceBtn');
+    const opts = $('choiceOpts');
+    const why = $('choiceWhy');
+    if (!btn) return;
+
+    /* 上一次的点选结果只在"题目/答案没变过"时才作数。
+       换了题还挂着旧提示，用户会以为刚才点的就是这道题。 */
+    const staleResult = H.choice.lastSig && H.choice.sig && H.choice.lastSig !== H.choice.sig;
+    const lastOk = staleResult ? null : H.choice.lastOk;
+    const lastText = staleResult ? '' : H.choice.lastText;
+
+    const list = H.choice.options || [];
+    /* 点选前显示"将要点的那个字母"；点选失败后显示"上次试着点过的字母" */
+    const targets = (lastOk === false || lastOk === true) && H.choice.lastLetters && H.choice.lastLetters.length
+      ? H.choice.lastLetters : (H.choice.clickable ? (H.choice.letters || []) : []);
+
+    opts.innerHTML = list.map((L) => {
+      const cls = targets.indexOf(L) >= 0 ? 'opt hit' : 'opt miss';
+      return '<span class="' + cls + '">' + esc(L) + '</span>';
+    }).join('');
+
+    const busy = !!H.choice.busy;
+    btn.classList.toggle('busy', busy);
+    btn.textContent = busy ? '点选中…' : '点选答案';
+    btn.disabled = busy || !H.choice.clickable;
+
+    let text = '';
+    let cls = '';
+    if (busy) {
+      text = '正在用 UI Automation 在窗口中查找选项…';
+    } else if (lastOk === true) {
+      text = lastText || '已点选';
+      cls = 'ok';
+    } else if (lastOk === false) {
+      text = lastText || '点选失败';
+      cls = 'bad';
+    } else if (!H.choice.isChoice) {
+      text = '当前不是选择题（题目里没有 A/B/C/D 选项）';
+    } else if (!H.choice.clickable) {
+      text = H.choice.why || '还没有可点选的答案';
+    } else {
+      text = '将点选：' + (H.choice.letters || []).join('、') +
+        '（' + (H.choice.autoClick ? '自动流程里会自己点' : '自动点选已关闭，可手动点') + '）';
+    }
+    why.textContent = text;
+    why.className = 'muted choice-why' + (cls ? ' ' + cls : '');
+    why.title = text;
   }
 
   /* ---------------- 题目修正（识别错了才用；题目本身只由识别产生） ---------------- */
@@ -395,6 +503,9 @@
     $('searchAutoFillChk').checked = !!s.searchAutoFill;
     $('ocrAutoSearchChk').checked = !!s.ocrAutoSearch;
     $('autoInputChk').checked = !!s.autoInputAfterSearch;
+    /* v1.3.0：选择题点选 */
+    $('autoClickChk').checked = s.autoClickChoice !== false;
+    $('clickThenTypeChk').checked = !!s.clickThenType;
 
     $('srcLocalChk').checked = !!s.searchLocal;
     $('srcWebChk').checked = !!s.searchWeb;
@@ -531,6 +642,8 @@
     renderAuto();
     renderOcr(st);
     renderAutoInput(st);
+    renderSubject(st);
+    renderChoice(st);
     renderSearchResults(false);
   }
 
@@ -599,6 +712,20 @@
       if (r && !r.ok && r.err && r.err !== 'busy') showToast('启动截图失败：' + r.err, 'error');
     });
     $('ocrRerunBtn').addEventListener('click', () => { api.ocr.rerun(); });
+    /* 学科：搜答案页里的快捷下拉 + 设置页里的那个，都写同一个设置 */
+    ['subjectSel', 'subjectOverrideSel'].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener('change', async (e) => {
+        await api.subject.set(e.target.value || '');
+      });
+    });
+    $('clickChoiceBtn').addEventListener('click', async () => {
+      $('clickChoiceBtn').classList.add('busy');
+      H.choice = Object.assign({}, H.choice, { busy: true });
+      renderChoice(null);
+      await api.choice.click({});
+    });
     $('ocrEditBtn').addEventListener('click', startEditQuestion);
     $('ocrSaveEditBtn').addEventListener('click', saveEditQuestion);
     $('ocrCancelEditBtn').addEventListener('click', cancelEditQuestion);
@@ -808,6 +935,8 @@
     $('autoLaunchChk').addEventListener('change', (e) => setS({ autoLaunch: e.target.checked }));
     $('searchAutoFillChk').addEventListener('change', (e) => setS({ searchAutoFill: e.target.checked }));
     /* 图片识别与自动流程 */
+    $('autoClickChk').addEventListener('change', (e) => setS({ autoClickChoice: e.target.checked }));
+    $('clickThenTypeChk').addEventListener('change', (e) => setS({ clickThenType: e.target.checked }));
     $('ocrAutoSearchChk').addEventListener('change', (e) => setS({ ocrAutoSearch: e.target.checked }));
     $('autoInputChk').addEventListener('change', (e) => setS({ autoInputAfterSearch: e.target.checked }));
     $('hotkeyCaptureSel').addEventListener('change', (e) => setS({ hotkeyCapture: e.target.value }));
@@ -955,6 +1084,11 @@
     H.autoInput = Object.assign({}, H.autoInput, d || {});
     renderAutoInput(null);
   });
+  api.onChoice((d) => {
+    if (!d) return;
+    H.choice = Object.assign({}, H.choice, d);
+    renderChoice(null);
+  });
 
   /* 供自动化脚本与视觉走查使用 */
   window.App = {
@@ -1013,6 +1147,44 @@
       $('questionBox').value = H.question;
       renderOcr({});
     },
+    /** 演示学科识别结果：id 传空字符串表示"还没识别出题目" */
+    previewSubject: function (id, conf) {
+      const list = H.subject.list || [];
+      H.subject = Object.assign({}, H.subject, {
+        subject: id || '',
+        label: id ? ((list.find((x) => x.id === id) || {}).label || id) : '',
+        confidence: typeof conf === 'number' ? conf : 0.82,
+        override: '',
+        autoReasons: id === 'math' ? ['方程', '符号×2', '式子×2'] : [],
+        autoNote: ''
+      });
+      renderSubject(null);
+    },
+    /** 演示选择题点选条；ok 传 true/false 可预置一次点选结果 */
+    previewChoice: function (letters, ok) {
+      const ls = String(letters || 'ABCD').split('');
+      /* 演示数据固定把 C 当作正确答案；选项里没有 C 就退而取第一个 */
+      const target = ls.indexOf('C') >= 0 ? ['C'] : [ls[0]];
+      H.choice = Object.assign({}, H.choice, {
+        isChoice: true,
+        options: ls,
+        letters: target,
+        answerLetter: 'C',
+        clickable: true,
+        why: '',
+        busy: false,
+        autoClick: true,
+        clickThenType: false,
+        lastOk: typeof ok === 'boolean' ? ok : null,
+        lastText: ok === true ? '已点选 ' + target[0] + '（按选项文字定位 · 模拟鼠标点击，并已回读确认选中）'
+          : (ok === false ? '这个窗口里没找到该选项。常见原因：页面还没渲染完、选项不在可见区域' : ''),
+        lastLetters: ok === false ? [] : target,
+        /* 预览结果必须与当前判定签名一致，否则会被当成"上一道题的旧结果"而隐去 */
+        sig: 'preview',
+        lastSig: 'preview'
+      });
+      renderChoice(null);
+    },
     /** 塞一个演示中的自动输入倒计时 */
     previewAutoInput: function (sec) {
       H.autoInput = {
@@ -1021,9 +1193,11 @@
         why: '本地题库', from: 'local',
         text: 'a²+b²=(a+b)²−2ab=3²−2×2=9−4=5', delaySec: sec || 5
       };
+      H.autoInputPreviewUntil = Date.now() + 8000;
       renderAutoInput(null);
     },
     cancelAutoInputPreview: function () {
+      H.autoInputPreviewUntil = 0;
       H.autoInput = { active: false, remain: 0, why: '', from: '', text: '', delaySec: 5 };
       renderAutoInput(null);
     },

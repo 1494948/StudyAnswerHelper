@@ -120,7 +120,11 @@
     await wait(260);
     /* 只做命中判定，绝不点击 captureBtn（会弹出全屏遮罩） */
     return await hitTest(['#captureBtn', '#ocrRerunBtn', '#ocrEditBtn', '#questionBox', '#searchBtn',
-      '#saveBankBtn', '#bankManageBtn', '#kbdCapture', '#ocrBar']);
+      '#saveBankBtn', '#bankManageBtn', '#kbdCapture', '#ocrBar',
+      /* v1.3.0：学科条与选择题点选条。
+         #choiceOpts 是个可能为空的 flex 容器（非选择题时没有子节点、尺寸为 0），
+         所以只测它的父行，不直接测它。 */
+      '#subjectRow', '#subjectChip', '#subjectWhy', '#subjectSel', '#choiceRow', '#clickChoiceBtn']);
   });
   await step('命中测试：设置面板', async () => {
     window.App.go('settings');
@@ -136,7 +140,9 @@
     return await hitTest(['#ocrEngineSel', '#ocrModelInp', '#ocrFallbackInp', '#ocrBaseUrlInp',
       '#ocrKeyInp', '#ocrSaveKeyBtn', '#ocrClearKeyBtn', '#ocrTestBtn', '#ocrLangsBtn',
       '#ocrUpscaleSel', '#ocrTimeoutSel', '#ocrAutoSearchChk', '#autoInputChk',
-      '#autoInputDelaySel', '#hotkeyCaptureSel']);
+      '#autoInputDelaySel', '#hotkeyCaptureSel',
+      /* v1.3.0：学科与选择题点选分区 */
+      '#subjectOverrideSel', '#autoClickChk', '#clickThenTypeChk']);
   });
 
   /* 3. 开关能被"真的点击"并且状态确实翻转 */
@@ -508,6 +514,174 @@
     await wait(200);
     assert(box.hidden, '取消后浮层没有收起');
     return hit + ' / 取消后已收起';
+  });
+
+  /* ============ 学科识别（v1.3.0，全离线） ============ */
+
+  await step('学科识别：界面显示学科、置信度与判断依据', async () => {
+    window.App.go('search');
+    await wait(200);
+    window.App.previewSubject('math', 0.83);
+    await wait(220);
+    assert(q('#subjectChip').textContent.indexOf('数学') >= 0, '学科标签不对：' + q('#subjectChip').textContent);
+    assert(q('#subjectWhy').textContent.indexOf('置信度') >= 0, '没有显示置信度：' + q('#subjectWhy').textContent);
+    assert(q('#subjectWhy').textContent.indexOf('依据') >= 0, '没有显示判断依据：' + q('#subjectWhy').textContent);
+    assert(q('#subjectSel').options.length >= 8, '学科下拉项太少：' + q('#subjectSel').options.length);
+    return '标签=' + q('#subjectChip').textContent + ' / ' + q('#subjectWhy').textContent.slice(0, 34);
+  });
+
+  await step('学科识别：主进程按真实题目判断（语文题不能被算成数学）', async () => {
+    await window.sp.question.set('下列词语中加点字的读音完全正确的一项是（　）A.档（dǎng）案 B.潜（qiǎn）力');
+    await wait(340);
+    const st = await window.sp.getState();
+    assert(st.subject.subject === 'chinese', '语文题被判成了 ' + st.subject.subject);
+    assert(q('#subjectChip').textContent.indexOf('语文') >= 0, '界面标签没跟上：' + q('#subjectChip').textContent);
+    return '识别为 ' + st.subject.label + '（置信度 ' + st.subject.confidence + '）';
+  });
+
+  await step('学科识别：手动指定立即生效、界面标注"手动"、可恢复自动', async () => {
+    await window.sp.subject.set('physics');
+    await wait(320);
+    let st = await window.sp.getState();
+    assert(st.subject.override === 'physics', '覆盖值没生效：' + st.subject.override);
+    assert(st.subject.subject === 'physics', '生效学科不对：' + st.subject.subject);
+    assert(q('#subjectChip').textContent.indexOf('手动') >= 0, '没有标注手动指定：' + q('#subjectChip').textContent);
+
+    await window.sp.subject.set('');
+    await wait(300);
+    st = await window.sp.getState();
+    assert(st.subject.override === '', '恢复自动后 override 应清空：' + st.subject.override);
+    assert(st.subject.subject === 'chinese', '恢复后应回到自动识别结果 chinese：' + st.subject.subject);
+    return 'physics → 手动；清空后回到 chinese';
+  });
+
+  await step('学科识别：非法学科 id 被拒绝（不能写进乱七八糟的值）', async () => {
+    await window.sp.subject.set('不存在的学科');
+    await wait(260);
+    const st = await window.sp.getState();
+    assert(st.subject.override === '', '非法值被写进去了：' + st.subject.override);
+    return '非法值已忽略，override 仍为空';
+  });
+
+  /* ============ 选择题点选（v1.3.0，离线） ============ */
+
+  await step('选择题：识别选项与答案字母，并在界面上高亮正确答案', async () => {
+    await window.sp.question.set('已知a+b=3，ab=2，则a²+b²的值为（ ）A.3 B.4 C.5 D.6');
+    await window.sp.setDraft('答案：C');
+    await wait(360);
+    const c = (await window.sp.getState()).choice;
+    assert(c.isChoice === true, '没认出这是选择题：' + JSON.stringify(c.why));
+    assert(c.options.join('') === 'ABCD', '选项识别不对：' + c.options.join(''));
+    assert(c.letters.join('') === 'C', '答案字母不对：' + c.letters.join(''));
+    assert(c.clickable === true, '应判定为可点选，原因：' + c.why);
+    const hit = q('#choiceOpts').querySelectorAll('.opt.hit');
+    assert(hit.length === 1 && hit[0].textContent === 'C', '界面高亮不对：' + hit.length);
+    assert(q('#clickChoiceBtn').disabled === false, '点选按钮应当可用');
+    return '选项 ' + c.options.join('') + ' / 答案 ' + c.letters.join('') + ' / 高亮 1 个';
+  });
+
+  await step('选择题：多选题答案（AC）也认，两个字母都高亮', async () => {
+    await window.sp.setDraft('答案：AC');
+    await wait(320);
+    const c = (await window.sp.getState()).choice;
+    assert(c.letters.join('') === 'AC', '多选字母不对：' + c.letters.join(''));
+    const hit = q('#choiceOpts').querySelectorAll('.opt.hit');
+    assert(hit.length === 2, '高亮个数不对：' + hit.length);
+    await window.sp.setDraft('答案：C');
+    await wait(240);
+    return 'AC 两个字母都识别并高亮';
+  });
+
+  await step('选择题：答案是纯数字时按钮禁用并说明原因（不假装能点）', async () => {
+    await window.sp.setDraft('5');
+    await wait(320);
+    const c = (await window.sp.getState()).choice;
+    assert(c.isChoice === true, '选项还在，应仍是选择题');
+    assert(c.clickable === false, '纯数字答案不该判定为可点选');
+    assert(q('#clickChoiceBtn').disabled === true, '按钮应当禁用');
+    assert(q('#choiceWhy').textContent.length > 0, '没有说明为什么点不了');
+    return '按钮已禁用，提示：' + q('#choiceWhy').textContent.slice(0, 28);
+  });
+
+  await step('选择题：不是选择题时如实说明，不误导用户去点', async () => {
+    await window.sp.question.set('求 a²+b² 的值，已知 a+b=3，ab=2');
+    await wait(340);
+    const c = (await window.sp.getState()).choice;
+    assert(c.isChoice === false, '这不该被判成选择题');
+    assert(q('#clickChoiceBtn').disabled === true, '非选择题时按钮应禁用');
+    assert(q('#choiceWhy').textContent.indexOf('不是选择题') >= 0, '提示不对：' + q('#choiceWhy').textContent);
+    return '如实提示：' + q('#choiceWhy').textContent.slice(0, 24);
+  });
+
+  await step('选择题：没有目标窗口时明确失败并留下状态（不静默、不卡住按钮）', async () => {
+    await window.sp.question.set('下列各项中正确的是（ ）A.甲 B.乙 C.丙 D.丁');
+    await window.sp.setDraft('答案：B');
+    await wait(340);
+    /* 自检环境里没有"学习通"窗口。显式传 hwnd:0 表示"确定没有窗口"，
+       主进程不能回退到自己窗口上去乱点 —— 那会把测试的 UI 点乱。 */
+    const r = await window.sp.choice.click({ hwnd: 0 });
+    assert(r && r.ok === false, '没有窗口时不该返回成功：' + JSON.stringify(r));
+    assert(String(r.why || '').indexOf('没有目标窗口') >= 0, '失败原因不够明确：' + r.why);
+    const c = (await window.sp.getState()).choice;
+    assert(c.busy === false, '点选失败后必须解除忙碌态，否则按钮会永久卡住');
+    assert(c.lastOk === false, '状态里没有记录这次失败：' + JSON.stringify(c.lastOk));
+    assert(q('#clickChoiceBtn').disabled === false, '失败后按钮应恢复可用（可以再试一次）');
+    return '返回失败 + 原因，忙碌态已解除，按钮可重试';
+  });
+
+  await step('选择题：点选脚本能被真实调起（打包后靠 asarUnpack 才做得到）', async () => {
+    /* 这一步是整个 v1.3.0 里唯一能证明"打包后还能点选"的断言：
+       它真的 spawn 一次 option-click-win.ps1。打包版里若这个脚本没进 asarUnpack，
+       就会返回 spawn-failed —— 那正是 ocr-win.ps1 当初踩过的同一个坑。
+       这里故意对着"当前前台窗口"（自检环境下就是本程序自己）扫一遍：只有读操作，
+       而且它里面没有 A/B/C/D 选项，所以预期结果是"找不到"，不是成功。 */
+    const st0 = await window.sp.getState();
+    const hwnd = st0 && st0.fg && st0.fg.hwnd ? st0.fg.hwnd : 0;
+    assert(hwnd > 0, '拿不到可用窗口句柄，无法验证脚本调用');
+
+    window.App.go('search');
+    await window.sp.question.set('下列各项中正确的是（ ）A.甲 B.乙 C.丙 D.丁');
+    await window.sp.setDraft('答案：B');
+    /* 缩短超时，别让这一步把自检拖长 */
+    await window.sp.setSettings({ clickTimeoutMs: 4000 });
+    await wait(320);
+
+    const r = await window.sp.choice.click({ hwnd: hwnd });
+    await window.sp.setSettings({ clickTimeoutMs: 15000 });
+    await wait(200);
+
+    /* 必须看到"脚本自己产生的错误码"。提前返回的那几个码
+       （no-window / not-choice / no-answer）说明根本没走到 spawn 那一步，
+       这一项就白测了 —— 所以要把它们显式排除掉。 */
+    const scriptCodes = ['ok', 'not-found', 'no-pattern', 'script-error', 'bad-letter', 'uia-unavailable', 'bad-json', 'no-result'];
+    assert(r && scriptCodes.indexOf(String(r.code)) >= 0,
+      '点选脚本没被真实调起（打包后常见原因：漏了 asarUnpack）→ code=' +
+      JSON.stringify(r && r.code) + ' why=' + JSON.stringify(r && r.why));
+    assert(r.ok === false, '对着一个没有 A/B/C/D 选项的窗口不该返回成功：' + JSON.stringify(r));
+    assert(String(r.why || '').length > 0, '失败原因不能为空');
+    return '脚本已真实执行并返回 code=' + r.code + '（打包后可调起的关键证据）';
+  });
+
+  await step('设置项：选择题点选的两个开关可改、可落盘、界面同步', async () => {
+    await window.sp.setSettings({ autoClickChoice: false, clickThenType: true });
+    await wait(340);
+    let st = await window.sp.getState();
+    assert(st.settings.autoClickChoice === false, 'autoClickChoice 没落盘');
+    assert(st.settings.clickThenType === true, 'clickThenType 没落盘');
+    assert(q('#autoClickChk').checked === false, '界面开关没同步');
+    assert(q('#clickThenTypeChk').checked === true, '界面开关没同步');
+
+    /* 关掉自动点选后，提示文案必须变 —— 否则用户以为它还会自己点。
+       这里特意换一道题干：沿用上一题的文本时判定签名不变，
+       界面会合理地保留"上次点选失败"的提示，测不到这句文案。 */
+    await window.sp.question.set('下列说法正确的是（ ）A.甲 B.乙 C.丙 D.丁');
+    await wait(320);
+    assert(q('#choiceWhy').textContent.indexOf('手动') >= 0,
+      '关闭自动点选后提示没跟着变：' + q('#choiceWhy').textContent);
+
+    await window.sp.setSettings({ autoClickChoice: true, clickThenType: false });
+    await wait(260);
+    return '两个开关可改 / 可落盘 / 界面与提示同步';
   });
 
   /* ============ 题库弹窗 ============ */

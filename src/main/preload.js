@@ -74,6 +74,15 @@ contextBridge.exposeInMainWorld('sp', {
     now: () => invoke('autoInput:now'),
     cancel: () => invoke('autoInput:cancel')
   },
+  subject: {
+    /* id 传空字符串表示"回到自动识别" */
+    set: (id) => invoke('subject:set', id)
+  },
+  choice: {
+    /* 手动点选当前题目的正确选项；payload 可带 answer / hwnd 覆盖缺省值 */
+    click: (payload) => invoke('choice:click', payload || {}),
+    state: () => invoke('choice:state')
+  },
   onState: (cb) => on('state', cb),
   onFg: (cb) => on('fg', cb),
   onAuto: (cb) => on('auto', cb),
@@ -82,5 +91,6 @@ contextBridge.exposeInMainWorld('sp', {
   onSearch: (cb) => on('search', cb),
   onOcr: (cb) => on('ocr', cb),
   onQuestion: (cb) => on('question', cb),
-  onAutoInput: (cb) => on('autoinput', cb)
+  onAutoInput: (cb) => on('autoinput', cb),
+  onChoice: (cb) => on('choice', cb)
 });

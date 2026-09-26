@@ -1,15 +1,19 @@
 # 学习通答题助手 · StudyAnswerHelper
 
-> 题目是照片？框一下，它认题、搜答案，5 秒后自己切到学习通把答案打进去。
+> 题目是照片？框一下 —— 它认题、判学科、搜答案，选择题直接替你点中选项，其他题型把答案打进去。
 >
-> Photo of a question? Box it — it reads the question, finds the answer, then switches to Xuexitong (Chaoxing) and types the answer in, character by character.
+> Photo of a question? Box it — it reads the question, works out the subject, finds the answer, clicks the right option on multiple-choice, and types the answer otherwise.
 
 **[中文说明](#中文说明) ｜ [English](#english)**
 
 ![搜答案](preview/main-search.png)
 
 <details open>
-<summary><b>其他界面截图（点开看：识别后自动输入 / 答案队列 / 题库管理 / 历史 / 设置 / 深色主题）</b></summary>
+<summary><b>其他界面截图（点开看：点选结果 / 识别后自动输入 / 答案队列 / 题库管理 / 历史 / 设置 / 深色主题）</b></summary>
+
+**自动点选选择题** —— 显示识别出的学科与置信度、四个选项里正确答案高亮，点一下（或等自动流程）就替你在学习通里点中它
+
+![点选答案](preview/main-choice-picked.png)
 
 **识别后自动输入** —— 搜到答案后弹 5 秒倒计时，把将要输入的答案原文先摊给你看，Esc 可取消
 
@@ -73,8 +77,10 @@
 
 - **大输入框**：整个左半屏都是输入区，可以直接 `Ctrl+V` 粘贴整段答案，自动保存草稿（关掉程序也不丢）
 - **图片识别题目（v1.2.0 新增）**：`Ctrl + Alt + X` 在屏幕上框住题目照片，自动识别出题干 —— 见下节
+- **自动判学科（v1.3.0 新增）**：不只会数学。数学、语文、英语、物理、化学、生物、历史、地理、道德与法治、信息技术都能认，并按该学科的规范作答（数学给步骤、英语给译文、语文给出处、物理化学给公式与配平）—— 见下节
+- **自动点选选择题（v1.3.0 新增）**：识别出是选择题并且知道正确答案是哪个字母时，直接在学习通窗口里**替你点中那个选项**（走系统无障碍接口，不靠坐标，换分辨率也不会失效）—— 见下节
 - **搜答案（v1.1.0 新增）**：贴一道题进去，三路答案来源同时开工 —— 见下节
-- **识别后自动输入（v1.2.0 新增）**：搜到高可信答案后弹 5 秒倒计时，自动切到学习通把答案打进去（秒数可调，整组可关）
+- **识别后自动输入（v1.2.0 新增）**：搜到高可信答案后弹 5 秒倒计时，自动切到学习通把答案打进去（秒数可调，整组可关）。**选择题会优先改为"点选选项"而不是打字**
 - **全局热键触发**：默认 `Ctrl + Alt + Enter`，在**任何**窗口下都生效，不需要先点回本程序
 - **自动模式**：打开开关后，只要切到学习通窗口，倒计时 3 秒就自动输入（按 `Esc` 随时取消）
 - **答案队列 + 顺序输入**：把多道题的答案预存成队列，每按一次 `Ctrl + Alt + ↓` 自动装下一条，适合连着一大批题往下录
@@ -113,6 +119,44 @@
 倒计时期间按 `Esc` 取消，点「立即输入」立刻动手。秒数可调（3 / 5 / 8 / 12 秒），
 整个自动流程也能一键关掉（设置 → 识别之后的自动流程）。
 
+### 判学科 + 自动点选选择题（v1.3.0 新增）
+
+**不再只是数学助手。**
+
+识别出题目后，它会用一个**纯本地的词法打分**判断这是哪一科（不联网、不调模型、瞬间出结果），
+然后把这门学科的作答规范交给 AI：数学要写步骤、英语要给译文和语法点、语文要给读音/写法/出处、
+物理要带单位、化学要配平、历史地理要给史实与成因、信息技术要给术语。
+
+界面上会显示判定的学科和一个**置信度**，还有判断依据（比如"依据：方程、符号×2、式子×2"）。
+判断错了？旁边的下拉框可以当场改成正确的学科 —— 它会记住你的选择。
+置信度低的时候标签会变成描边样式，提醒你别全信。
+
+支持的学科：`数学 / 语文 / 英语 / 物理 / 化学 / 生物 / 历史 / 地理 / 道德与法治 / 信息技术`，
+认不出来时按「通用」处理。
+
+**选择题可以替你点。**
+
+当题目里有 `A. B. C. D.` 选项、且答案能明确落到某个字母上时（例如 `答案：C`），
+下方会出现「点选答案」按钮，并把**正确答案那个字母高亮**出来：
+
+- 打开「设置 → 学科与选择题点选 → 选择题：自动点选正确选项」后，
+  识别→搜答案→5 秒倒计时结束时会**直接替你点中那个选项**，而不是往输入框里打一个字母
+- 想手动来，随时可以点那个按钮
+- 多选题（答案形如 `AC`）也支持，会按字母顺序逐个点
+
+**它是怎么点的（这点很重要）**：走 Windows 的 **UI Automation** ——
+在目标窗口里找到"名字以 `A.` / `B.` / `C.` / `D.` 开头的可选控件"，然后选中它。
+**不依赖坐标**，所以换分辨率、换缩放、页面滚动都不会失效。
+
+失败时它会说清楚原因，而不是假装成功：
+- 读不到这个窗口的界面结构 → 会提示你先把学习通切到前台、点一下页面再试
+- 找到了选项但点不动 → 会提示页面拦截了程序化操作
+- 点选失败会自动**退回"直接输入答案文本"**，并把失败原因写在提示里
+
+> **一个需要知情的边界**：它依赖目标程序向系统暴露界面结构。实测浏览器（Edge）没问题；
+> 少数以受限参数启动的 Chromium 客户端可能不暴露，此时会明确报"这个窗口没有暴露界面结构"，
+> 请改用浏览器网页版学习通，或改用「输入答案」的方式。
+
 ### 搜答案：题目进去，答案出来
 
 学习通上常常只有题目、没有答案。这个功能就是补上这一步：**把题目贴进来，它去帮你找答案，找到就一键填进大框。**
@@ -150,8 +194,8 @@ AI 的可以「答案+解析」一起填。然后回到学习通，按 `Ctrl + A
 
 | 文件 | 说明 |
 |---|---|
-| `StudyAnswerHelper-Setup-1.2.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
-| `StudyAnswerHelper-Portable-1.2.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
+| `StudyAnswerHelper-Setup-1.3.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
+| `StudyAnswerHelper-Portable-1.3.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
 
 > **Windows 会弹"已保护你的电脑"（SmartScreen）**
 > 这是正常的：本程序没有购买代码签名证书（一年几百到几千元），Windows 对没有签名的程序一律拦一下。
@@ -277,8 +321,14 @@ Electron 主进程 ──IPC──> 渲染进程（界面）
       │                          ├─ lib/http.js            零依赖 HTTP（搜狗 / 360 / 必应）
       │                          └─ lib/textsim.js         归一化 / 相似度 / 答案解析
       │
-      └── lib/ocr.js ────────────┬─ AI 视觉模型（OpenAI 兼容，主备双模型级联）
-        （v1.2.0）               └─ lib/ocr-win.ps1         WinRT Windows.Media.Ocr（离线兜底）
+      ├── lib/ocr.js ────────────┬─ AI 视觉模型（OpenAI 兼容，主备双模型级联）
+      │ （v1.2.0）               └─ lib/ocr-win.ps1         WinRT Windows.Media.Ocr（离线兜底）
+      │
+      ├── lib/subject.js          学科识别（纯词法打分）+ 选择题与答案字母解析
+      │ （v1.3.0）
+      │
+      └── lib/option-click.js ──── lib/option-click-win.ps1  UI Automation：找选项并选中它
+        （v1.3.0）
 ```
 
 **图片识别链路（v1.2.0）：**
@@ -303,6 +353,25 @@ Ctrl+Alt+X ──> 隐藏主窗口 ──> desktopCapturer 抓整屏
 - **网页摘要不能整段比对。** 题干十几个字、摘要三四百字，直接比会被摊薄到 0.2 左右，排名就没法看了。所以对"标题""摘要开头""整段"各算一次取最大值 —— 题库站的标题往往就是题干原文。
 
 **零第三方依赖**：HTTP 客户端基于 Node 内置 `http/https/zlib` 自己写（含重定向跟随、超时、gzip/deflate/br 解压、响应体上限）；HTML 解析用正则 + 实体解码，不引 DOM 库；题库就是一个 JSON 文件；图片识别也不用任何 SDK —— 视觉模型直接走 `fetch` 发 base64 图片，系统 OCR 走一段 PowerShell 脚本调 WinRT。整个项目除 `electron` 和 `koffi` 外没有运行时依赖。
+
+**学科识别与自动点选的四个技术要点（v1.3.0）：**
+
+- **学科判断故意不用模型。** 它只是决定"AI 该按哪一科的规范作答"，用错也不会致命，
+  所以做成了纯词法打分：关键词分强/弱两级（"解方程"强、"已知"弱）、数学符号、
+  以及"代数式"模式（`字母/数字 + 运算符 + 字母/数字`），再加一条语言先验
+  （汉字占比高就把"英语"降权）。**不联网、不调模型、瞬间出结果、完全可离线复现**，
+  所以它能被自检覆盖。判断错了旁边就有下拉框可改。
+- **点选不记坐标，走系统无障碍接口。** 记住"选项在屏幕上的位置"这条路看起来简单，
+  但分辨率、缩放、页面滚动、字体大小任何一项变化都会失效。改用 UI Automation
+  按语义找元素：名字以 `A.`/`B.`/`C.`/`D.` 开头的可选控件。找到后依次尝试
+  `SelectionItemPattern.Select` → `InvokePattern.Invoke` → `TogglePattern.Toggle`，
+  都不支持才退化为在该元素中心做一次真实鼠标点击；点完还会**回读确认是否真的选中**。
+- **Chromium 系窗口的无障碍树要主动唤醒。** 这类窗口的界面结构是按需构建的，
+  第一次查询可能什么也读不到。脚本会先给窗口发 `WM_GETOBJECT` 且
+  `lParam = UiaRootObjectId`（用带超时的 `SendMessageTimeoutW`，避免被卡住的目标阻塞），
+  再配合重试与全量遍历。实测：不这么做，17 次尝试 12 秒仍然读到 0 个控件。
+- **拿不准就不点。** 选项字母匹配不到时，只有在"可选控件数量**恰好等于**选项数"时才按序号兜底；
+  对不上就拒绝点选 —— 这道题宁可不点，也不能点错。失败原因会原样告诉用户。
 
 **图片识别的三个技术要点：**
 
@@ -372,18 +441,18 @@ npm config set registry https://registry.npmmirror.com
 ```bash
 git init
 git add .
-git commit -m "学习通答题助手 v1.2.0：源码"
+git commit -m "学习通答题助手 v1.3.0：源码"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
 
 # 再发布 Release（需要先安装 GitHub CLI：https://cli.github.com/）
-gh release create v1.2.0 \
-  "release/StudyAnswerHelper-Setup-1.2.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.2.0.exe" \
+gh release create v1.3.0 \
+  "release/StudyAnswerHelper-Setup-1.3.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.3.0.exe" \
   "release/使用说明.txt" \
-  --title "学习通答题助手 v1.2.0" \
-  --notes "新增图片识别题目 + 框选截图 + 识别后 5 秒自动输入"
+  --title "学习通答题助手 v1.3.0" \
+  --notes "新增学科识别与选择题自动点选"
 ```
 
 README 里的下载链接用的是相对路径 `../../releases`，所以走 Releases 时链接直接就通。
@@ -396,7 +465,7 @@ README 里的下载链接用的是相对路径 `../../releases`，所以走 Rele
 # 先删掉 .gitignore 里 "release/" 这一行
 git init
 git add .            # 删掉那行之后，exe 才会被一起提交
-git commit -m "学习通答题助手 v1.2.0（含 exe）"
+git commit -m "学习通答题助手 v1.3.0（含 exe）"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
@@ -421,6 +490,7 @@ git push -u origin main
 | `SP_SHOT=1` | **界面截图走查**：把六个页面 × 两套主题截成 PNG 放到 `preview/`（用现造的演示数据，不会截进真实答案） |
 | `SP_SEARCHTEST=1` | **真实检索链路**：联网实跑一次三源检索，把候选与错误原样写进日志。**故意和自检分开** —— 自检必须离线可复现，而这条链路依赖外部搜索引擎 |
 | `SP_CAPTURETEST=1` | **真实识别链路**：真开一次全屏框选遮罩，走完"截图 → 裁剪 → 识别 → 落盘"。加 `SP_CAPTURE_KEEP=x.png` 会把遮罩画面和裁剪结果各存一份，方便人工核对 |
+| `SP_CLICKTEST=1` | **真实点选链路**：开一个带真实单选按钮的原生窗口，让 UI Automation 去点，再从目标窗口**读回**到底选中了没有。同时验证"名称里没有选项字母时拒绝点选""选项数不符时拒绝点选" |
 
 v1.1.0 打包产物的实测结果（开发态与打包后的 exe 各跑一遍，结果一致）：
 
@@ -446,6 +516,25 @@ SP_CAPTURETEST   遮罩窗口 1920×1080 == 屏幕；底图 1:1 未被拉伸；
 > `SP_CAPTURETEST` 里那条像素比对是**故意在"关掉放大"的前提下**做的：
 > 开启放大时用的是高质量插值，放大图每个像素都是邻域混合值，逐字节比必然差几个色阶。
 > 关掉放大再比，才是"框哪裁哪"的硬证明 —— 改截图相关代码后务必重跑它。
+
+v1.3.0 的实测结果（开发态）：
+
+```
+SP_SELFTEST     49 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+SP_SMOKE         5 项通过 / 0 项失败
+SP_SHOT          7 个页面 × 2 套主题，含新增 main-choice-picked.png
+SP_CLICKTEST     6 项通过 / 0 项失败：
+                 按选项文字定位 → 真的点中，并从目标窗口读回确认选中了 C
+                 名称里没有选项字母 → 拒绝点选，目标窗口确认没有被误选
+                 选项数与实际可选控件数不符 → 拒绝点选
+                 无效句柄 → 如实失败并给出可操作提示
+```
+
+> **`SP_CLICKTEST` 覆盖什么、不覆盖什么**：它验证的是**匹配与调用逻辑**（找元素 → 选中 → 回读确认）。
+> 它不验证"真实浏览器页面里的选项"，因为这个测试环境的沙箱 Electron 窗口不暴露无障碍树
+> （实测只暴露 `Chrome Legacy Window` 桩节点，真实 Edge 窗口则返回 1138 个元素）。
+> 另一条"按序号兜底"的路径需要真正的 `RadioButton` 类型控件才会触发，本机 WinForms 窗口的
+> 单选按钮被系统桥接成 `Pane`，所以那条路径**在本机未被覆盖** —— 它的设计是"数量不符就拒绝"。
 
 ```bash
 # Windows / PowerShell
@@ -520,6 +609,8 @@ This project **does not use screen recognition to locate UI elements** (no templ
 
 - **Large input box** — half the window is the input area. Paste a whole answer with `Ctrl+V`; the draft is auto-saved and survives a restart.
 - **Photo questions (new in v1.2.0)** — press `Ctrl + Alt + X` and drag a box around a question on screen; it reads the question text. See the next section.
+- **Subject detection (new in v1.3.0)** — not just maths. It recognises maths, Chinese, English, physics, chemistry, biology, history, geography, civics and IT, and answers each in that subject's idiom. See below.
+- **Automatic option clicking (new in v1.3.0)** — when the question is multiple-choice and the correct letter is known, it clicks that option in Xuexitong for you (via the Windows accessibility API, not screen coordinates, so resolution changes cannot break it). See below.
 - **Answer search (new in v1.1.0)** — paste a question, and three answer sources fire at once. See below.
 - **Auto-enter after recognition (new in v1.2.0)** — once a high-confidence answer is found, a 5-second countdown starts and it switches to Xuexitong and types it (interval configurable, whole flow can be turned off).
 - **Global hotkey** — default `Ctrl + Alt + Enter`, works from **any** window, no need to click back into this app first.
@@ -560,6 +651,46 @@ If it got something wrong, click "修正题目" to unlock, edit, then "保存修
 **5-second countdown** appears in the corner, showing the exact answer text it is about to type. Press `Esc` to cancel,
 or click "立即输入" to go now. The interval is configurable (3 / 5 / 8 / 12 s) and the whole flow can be switched off.
 
+### Subject detection + automatic option clicking (new in v1.3.0)
+
+**No longer a maths-only helper.**
+
+After reading the question it classifies the subject with a **purely local keyword score** — no network,
+no model call, instant — and then hands that subject's conventions to the AI: maths gets worked steps,
+English gets a translation and the grammar point, Chinese gets readings/writings/sources, physics gets
+units, chemistry gets balanced equations, history and geography get facts and causes.
+
+The UI shows the detected subject plus a **confidence** and the evidence behind it
+(the labels are Chinese, e.g. `置信度 83% · 依据：方程、符号×2`). Pick the wrong subject?
+Change it right there in the dropdown and it remembers.
+Low confidence renders the chip as an outline, so you know not to trust it.
+
+Subjects: `maths / Chinese / English / physics / chemistry / biology / history / geography / civics / IT`,
+falling back to "general".
+
+**Multiple-choice questions get clicked for you.**
+
+When the question has `A. B. C. D.` options and the answer resolves to a letter (e.g. `答案：C`),
+an "点选答案" button appears and the **correct letter is highlighted**:
+
+- With "选择题：自动点选正确选项" enabled in Settings, the 5-second countdown ends by
+  **clicking that option directly** instead of typing a letter into the field
+- You can also click the button manually at any time
+- Multi-select answers (`AC`) are supported — it clicks each letter in order
+
+**How it clicks — this part matters**: it uses Windows **UI Automation** to find the selectable control
+whose name starts with `A.` / `B.` / `C.` / `D.` and selects it. **No screen coordinates**, so resolution,
+DPI scaling and page scrolling cannot break it. After clicking it **reads the state back** to confirm.
+
+Failures are reported honestly rather than faked: unreadable window structure, not-yet-rendered page,
+or a page that blocks programmatic selection. If clicking fails it **falls back to typing the answer text**
+and says why.
+
+> **One boundary worth knowing**: this relies on the target program exposing its UI structure.
+> A real browser (Edge) does — measured. A few Chromium clients started with restrictive flags do not,
+> in which case the tool says exactly that and you should use the browser version of Xuexitong
+> or keep using the "type the answer" mode.
+
 ### Answer search: question in, answer out
 
 Xuexitong assignments frequently contain questions but no answers. This closes that gap: **paste the question, it goes and finds the answer, and one click puts it in the big box.**
@@ -594,8 +725,8 @@ Grab one of the two files from this repository's [Releases](../../releases) page
 
 | File | Description |
 |---|---|
-| `StudyAnswerHelper-Setup-1.2.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
-| `StudyAnswerHelper-Portable-1.2.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
+| `StudyAnswerHelper-Setup-1.3.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
+| `StudyAnswerHelper-Portable-1.3.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
 
 > **Windows SmartScreen will warn you.** This is expected: the app is not code-signed (a certificate costs hundreds to thousands per year), and Windows blocks unsigned binaries by default. Click "More info" → "Run anyway". The full source is in this repository — audit it, or build it yourself.
 
@@ -775,18 +906,18 @@ The finished binaries are in `release/`. Pick one of three routes.
 ```bash
 git init
 git add .
-git commit -m "StudyAnswerHelper v1.2.0: source"
+git commit -m "StudyAnswerHelper v1.3.0: source"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
 
 # then publish a release (requires the GitHub CLI: https://cli.github.com/)
-gh release create v1.2.0 \
-  "release/StudyAnswerHelper-Setup-1.2.0.exe" \
-  "release/StudyAnswerHelper-Portable-1.2.0.exe" \
+gh release create v1.3.0 \
+  "release/StudyAnswerHelper-Setup-1.3.0.exe" \
+  "release/StudyAnswerHelper-Portable-1.3.0.exe" \
   "release/使用说明.txt" \
-  --title "StudyAnswerHelper v1.2.0" \
-  --notes "Adds photo-question OCR, on-screen region capture, and a 5-second auto-enter countdown"
+  --title "StudyAnswerHelper v1.3.0" \
+  --notes "Adds subject detection and automatic clicking of multiple-choice options"
 ```
 
 The download links in this README use the relative path `../../releases`, so they work out of the box with this route.
@@ -796,7 +927,7 @@ The download links in this README use the relative path `../../releases`, so the
 ```bash
 git init
 git add .            # release/ is not gitignored, so the exes are included
-git commit -m "StudyAnswerHelper v1.2.0 (with binaries)"
+git commit -m "StudyAnswerHelper v1.3.0 (with binaries)"
 git branch -M main
 git remote add origin https://github.com/<your-name>/<repo>.git
 git push -u origin main
@@ -818,6 +949,7 @@ Five self-check harnesses ship with the project. Run them after touching the cod
 | `SP_SHOT=1` | **Visual walkthrough**: captures six pages × two themes into `preview/` as PNGs. Uses freshly generated demo data so real answers never end up in the screenshots. |
 | `SP_SEARCHTEST=1` | **Live search path**: runs one real three-source search and logs candidates and errors verbatim. Deliberately separate from the self-test — the self-test must be reproducible offline, whereas this path depends on third-party search engines. |
 | `SP_CAPTURETEST=1` | **Live recognition path**: actually opens the full-screen capture overlay and runs capture → crop → OCR → persist. Add `SP_CAPTURE_KEEP=x.png` to dump both the overlay and the crop for eyeballing. |
+| `SP_CLICKTEST=1` | **Live option-clicking path**: opens a native window with real radio buttons, lets UI Automation click one, then **reads back from the target window** whether it actually got selected. Also asserts that it *refuses* to click when option names carry no letter, and when the option count does not match. |
 
 Measured on the v1.1.0 artifacts (development tree and the packaged exe, same results):
 
@@ -845,6 +977,24 @@ SP_CAPTURETEST   overlay 1920×1080 == screen; background 1:1, not stretched;
 > Turning it off is what makes it a hard proof that "what you boxed is what got cropped" — re-run it after
 > touching any capture code.
 
+Measured on v1.3.0 (development tree, packaged `win-unpacked`, and the portable build):
+
+```
+SP_SELFTEST     50 passed / 0 failed / 0 renderer JS errors   (all three builds)
+SP_SMOKE         5 passed / 0 failed
+SP_SHOT          7 pages × 2 themes
+SP_CLICKTEST     6 passed / 0 failed  (both dev tree and packaged win-unpacked):
+                 locate by option text → actually clicked, target window read back "C"
+                 option names carry no letter → refuses to click, nothing got mis-selected
+                 option count ≠ selectable-control count → refuses to click
+                 invalid window handle → honest failure with an actionable message
+```
+
+> The packaged run of `SP_CLICKTEST` is what caught a real shipping defect: `option-click.js` was passing
+> an **asar-internal path** to the script host. The existence check passed (Electron's `fs` reads inside
+> asar), dev mode worked, and the packaged build could not click at all. Spawned scripts must be rewritten
+> to the `app.asar.unpacked` path — see the note in `lib/option-click.js`.
+
 ```powershell
 $env:ELECTRON_RUN_AS_NODE = $null      # must be cleared, or Electron boots as plain Node
 $env:SP_SMOKE_LOG = "$PWD\_smoke.log"  # write logs to a file (some terminals swallow stdout)
@@ -863,6 +1013,7 @@ $env:SP_SMOKE = "1"
   - `%APPDATA%\学习通答题助手\answer-bank.json` (local question bank)
 - No telemetry, no accounts, no analytics.
 - **Screen capture happens only when you press `Ctrl + Alt + X`** (or click "截图选题"): one shot, and the temporary file is deleted right after recognition. The app does not read the screen at any other time and does not log keystrokes.
+- **Option clicking only happens inside a flow you started, and only in the window recognised as Xuexitong.** It never clicks other windows and never clicks on a timer in the background.
 - The clipboard is read in exactly two places: when you click "read clipboard", and when you press the search hotkey. Never otherwise.
 - The app reads only the **title and process name** of the foreground window to decide "is this Xuexitong?" — never window contents.
 - API keys (AI answer, AI vision) are stored in plain text in `answer-data.json` and used **only in the main process**. Self-test assertions guard that **neither key reaches the renderer**: every state pushed to the UI is scrubbed first. Use "Clear key" to remove them.

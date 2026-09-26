@@ -7,6 +7,7 @@
  *   搜答案：lib/answer-search.js（本地题库 / 网络检索 / AI 解答 三源合一）
  * ------------------------------------------------------------------ */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { fork } = require('child_process');
 
@@ -36,7 +37,7 @@ function logLine(s) {
 
 /* ---------------- 测试模式：数据隔离（必须在单实例锁之前） ---------------- */
 const TEST_MODE = !!(process.env.SP_SELFTEST || process.env.SP_SMOKE || process.env.SP_SHOT ||
-  process.env.SP_SEARCHTEST || process.env.SP_CAPTURETEST);
+  process.env.SP_SEARCHTEST || process.env.SP_CAPTURETEST || process.env.SP_CLICKTEST);
 let TEST_DIR = null;
 if (TEST_MODE) {
   TEST_DIR = path.join(app.getPath('temp'), 'study-answer-helper-test');
@@ -114,6 +115,11 @@ const DEFAULT_STATE = {
     /* ---- 识别之后的自动流程 ---- */
     ocrAutoSearch: true,            /* 识别出题目后自动去搜答案 */
     autoInputAfterSearch: true,     /* 搜到答案后自动切到学习通输入 */
+    /* v1.3.0：学科识别与选择题自动点选 */
+    subjectOverride: '',            /* '' = 自动识别；否则强制指定学科 id */
+    autoClickChoice: true,          /* 选择题：搜到答案后自动点选正确选项 */
+    clickThenType: false,           /* 点选之后是否再把答案文本也打进去（默认不，避免在选项页乱打字） */
+    clickTimeoutMs: 15000,          /* 单次点选的超时（UIA 遍历整个窗口，1~3 秒是常态） */
     autoInputDelaySec: 5,           /* 倒计时秒数（用户要求 5 秒） */
     hotkeyCapture: 'c-alt-x'        /* 截图选题热键 */
   },
@@ -133,6 +139,13 @@ let S = store.all();
 const { AnswerBank } = require('./lib/answer-bank');
 const searchLib = require('./lib/answer-search');
 const ocrLib = require('./lib/ocr');
+const subjectLib = require('./lib/subject');       /* 学科识别 + 选择题解析（纯本地） */
+const optionClick = require('./lib/option-click'); /* UI Automation 点选选项 */
+
+/** 学科识别结果（derived，不进 store；只有 override 是持久化的） */
+const subjectState = { auto: {}, effective: {}, choiceInfo: {}, at: 0 };
+/** 选择题点选状态 */
+const choiceState = { at: 0, info: {}, question: '', answer: '', result: null, busy: false };
 const bank = new AnswerBank(path.join(app.getPath('userData'), 'answer-bank.json'));
 
 const HOTKEY_PRESETS = {
@@ -613,6 +626,9 @@ function setDraftText(text) {
   S.draft = t.slice(0, 20000);
   store.set('draft', S.draft);
   send('draft', S.draft);
+  /* 大框内容就是"当前答案"，选择题判定要跟着它走：
+     界面上的"可点选"提示、以及手动点选按钮取的都是这份判定结果 */
+  refreshChoice(S.draft);
   return S.draft;
 }
 
@@ -671,7 +687,13 @@ function searchOptions(override) {
       baseUrl: st.aiBaseUrl,
       model: st.aiModel,
       maxTokens: st.aiMaxTokens,
-      temperature: Number(st.aiTemperature)
+      temperature: Number(st.aiTemperature),
+      /* v1.3.0：把识别出的学科交给 AI，提示词会按学科切换。
+         低置信度时 aiHint() 自己会退回通用版，这里不必再判断。 */
+      subjectHint: subjectLib.aiHint(
+        (subjectState.effective && subjectState.effective.subject) || 'general',
+        (subjectState.effective && subjectState.effective.confidence) || 0
+      )
     }
   };
 }
@@ -712,6 +734,9 @@ async function runSearchNow(payload) {
     toast('上一次搜索还没结束，请稍候…', 'warn');
     return { ok: false, err: 'busy' };
   }
+
+  /* 被搜的题目 != 题目框里的内容时（剪贴板搜题），学科要按被搜的那段重算 */
+  if (question !== S.question) refreshSubject(question);
 
   const opts = searchOptions(p);
   const id = ++searchState.seq;
@@ -868,7 +893,206 @@ function setQuestionText(text) {
   S.question = t;
   store.set('question', t);
   send('question', t);
+  /* 题目一变就重算学科 —— 它决定 AI 提示词、也决定界面上的学科标签 */
+  refreshSubject();
   return t;
+}
+
+/* ================= 学科识别（v1.3.0） ================= */
+
+/**
+ * 识别当前题目的学科。纯本地词法打分，不联网、不调模型。
+ * 结果只用于三处：AI 提示词、界面标签、选择题判定。
+ * 用户可以手动覆盖（settings.subjectOverride），覆盖优先于自动识别。
+ */
+function refreshSubject(text) {
+  /* 允许传入"不是题目框里的那段文字" —— 按 Ctrl+Alt+F 从剪贴板搜题时，
+     题目框不会被覆盖（v1.2.0 的约定：它只承载识别结果），但学科要按实际被搜的那段算，
+     否则 AI 提示词会拿上一道题的学科去答这一道。 */
+  const q = text === undefined ? S.question : String(text || '');
+  const auto = subjectLib.detect(q);
+  const ov = String(settings().subjectOverride || '').trim();
+  let effective = auto;
+  if (ov) {
+    const meta = subjectLib.SUBJECTS.find(function (s) { return s.id === ov; });
+    if (meta) {
+      effective = Object.assign({}, auto, {
+        subject: meta.id,
+        label: meta.label,
+        confidence: 1,
+        note: '已由你手动指定'
+      });
+    }
+  }
+  subjectState.auto = auto;
+  subjectState.effective = effective;
+  subjectState.text = q;
+  subjectState.source = (text === undefined ? 'question' : 'external');
+  subjectState.at = Date.now();
+  /* 换了题目，选择题判定必须一起重算 —— 否则界面会拿上一道题的选项列表去点选。
+     refreshChoice 内部只在判定真的变化时才推事件，所以这里放心调。 */
+  refreshChoice(choiceState.answer, q);
+  return effective;
+}
+
+function publicSubject() {
+  const auto = subjectState.auto || {};
+  const eff = subjectState.effective || {};
+  const ch = subjectState.choiceInfo || {};
+  return {
+    autoSubject: auto.subject || '',
+    autoLabel: auto.label || '',
+    autoConfidence: typeof auto.confidence === 'number' ? auto.confidence : 0,
+    autoNote: auto.note || '',
+    autoReasons: auto.reasons && auto.subject && auto.reasons[auto.subject]
+      ? auto.reasons[auto.subject] : [],
+    subject: eff.subject || '',
+    label: eff.label || '',
+    confidence: typeof eff.confidence === 'number' ? eff.confidence : 0,
+    override: String(settings().subjectOverride || ''),
+    options: ch.options || [],
+    isChoice: !!ch.isChoice,
+    list: subjectLib.SUBJECTS.map(function (s) { return { id: s.id, label: s.label }; }),
+    at: subjectState.at || 0
+  };
+}
+
+/* ================= 自动点选选择题选项（v1.3.0） ================= */
+
+/**
+ * 极简字符串散列（djb2）。只用来判断"是不是同一道题"，不做任何安全用途。
+ * 为什么要连题干一起进签名：两道题可能都是"四个选项 ABCD、答案都是 B"，
+ * 只看选项和字母的话签名完全一样，界面就会把上一题的失败提示挂到这一题上。
+ */
+function textHash(s) {
+  let h = 5381;
+  const t = String(s === undefined || s === null ? '' : s);
+  for (let i = 0; i < t.length; i++) h = (((h << 5) + h) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/** 记录"当前题目/答案是选择题、正确答案是哪个字母"，供界面显示与一键点选 */
+function refreshChoice(answer, question) {
+  const q = question === undefined ? S.question : String(question || '');
+  const ch = subjectLib.resolveChoice(q, answer || '');
+  const prev = choiceState.info || {};
+  choiceState.at = Date.now();
+  choiceState.info = ch;
+  choiceState.question = q;
+  choiceState.answer = String(answer || '');
+  if (prev.isChoice !== undefined && prev.isChoice !== ch.isChoice) {
+    /* 从"选择题"变成了"不是选择题"（或反过来）说明换题了，清掉上次结果避免误读 */
+    choiceState.result = null;
+  }
+  subjectState.choiceInfo = ch;
+  /* 大框每敲一个字都会走到这里，所以只在"判定结果真的变了"时才推事件，
+     否则会变成每键一次 IPC。 */
+  const sig = [ch.isChoice, ch.options.join(''), ch.letters.join(''),
+    ch.answerLetter || '', textHash(q)].join('|');
+  if (sig !== choiceState.sig) {
+    choiceState.sig = sig;
+    send('choice', publicChoice());
+  }
+  return ch;
+}
+
+function publicChoice() {
+  const ch = choiceState.info || {};
+  const r = choiceState.result;
+  return {
+    at: choiceState.at || 0,
+    isChoice: !!ch.isChoice,
+    options: ch.options || [],
+    letters: ch.letters || [],
+    answerLetter: ch.answerLetter || '',
+    clickable: !!ch.clickable,
+    why: ch.why || '',
+    autoClick: !!settings().autoClickChoice,
+    clickThenType: !!settings().clickThenType,
+    busy: !!choiceState.busy,
+    /* sig 让渲染层能判断"这条结果是不是还适用于当前题目/答案"。
+       换了题或改了答案之后，上一次的点选结果就该作废，否则界面会一直挂着旧的失败提示。 */
+    sig: choiceState.sig || '',
+    lastOk: r ? !!r.ok : null,
+    lastText: r ? (r.why || '') : '',
+    lastLetters: r && r.clicked ? r.clicked : [],
+    lastSig: choiceState.resultSig || '',
+    lastAt: r ? r.at : 0
+  };
+}
+
+/**
+ * 点选当前题目的正确选项。
+ * @param {{hwnd?:number, answer?:string}} o
+ *   hwnd   目标窗口句柄，缺省用最近一次命中的学习通窗口
+ *   answer 答案文本，缺省用大框里的草稿（自动流程里是刚填入的那条候选）
+ */
+async function clickChoiceNow(o) {
+  const opt = o || {};
+  /* 每一次调用都必须以一次 'choice' 事件收尾 —— 渲染层收到按钮点击后就把按钮
+     置成"点选中…"，主进程若在某个提前 return 上直接返回，按钮会永远卡在忙碌态。 */
+  /* code 一定要带上：调用方（尤其是自检）需要区分"根本没到脚本那一步"和
+     "脚本跑了但没找到"。少了这个字段，断言就会退化成"只要不是 spawn-failed 就算过"，
+     等于什么都没验证。 */
+  function fail(why, code) {
+    choiceState.busy = false;
+    choiceState.result = { at: Date.now(), ok: false, why: why, code: code || '', letters: [], clicked: [] };
+    choiceState.resultSig = choiceState.sig || '';
+    send('choice', publicChoice());
+    return { ok: false, why: why, code: code || '' };
+  }
+
+  if (choiceState.busy) return { ok: false, why: '上一次点选还在进行中' };
+
+  const st = settings();
+  const answer = String(opt.answer === undefined ? S.draft : opt.answer || '');
+  /* 题目优先用调用方给的（剪贴板搜题那条链路里，题目框可能是上一道题的内容） */
+  const q = String(opt.question === undefined ? (S.question || '') : (opt.question || ''));
+  const ch = refreshChoice(answer, q);
+  if (!ch.isChoice) {
+    toast('这道题不是选择题：' + (ch.why || ''), 'warn');
+    return fail(ch.why || '不是选择题', 'not-choice');
+  }
+  if (!ch.clickable) {
+    toast('点不了：' + (ch.why || ''), 'warn');
+    return fail(ch.why || '没有可点选的答案', 'no-answer');
+  }
+
+  /* hwnd 显式传了就用传的那个（<=0 视为"明确没有窗口"，不再回退），
+     没传才回退到最后一次命中的学习通窗口。 */
+  const hwnd = (opt.hwnd === undefined || opt.hwnd === null || opt.hwnd === '')
+    ? lastMatchedHwnd
+    : (Number(opt.hwnd) > 0 ? Number(opt.hwnd) : 0);
+  if (!hwnd) {
+    toast('还没识别到学习通窗口。请先切到学习通一次，再点选', 'warn');
+    return fail('没有目标窗口（请先切到学习通一次，让它识别到窗口）', 'no-window');
+  }
+
+  choiceState.busy = true;
+  send('choice', publicChoice());
+  pushState();
+
+  let res = null;
+  try {
+    res = await optionClick.clickAnswer({
+      hwnd: hwnd,
+      question: q,
+      answer: answer,
+      timeoutMs: parseInt(st.clickTimeoutMs, 10) || 15000
+    });
+  } catch (e) {
+    res = { ok: false, why: '点选过程出错：' + (e && e.message ? e.message : String(e)), letters: [], results: [] };
+  }
+
+  choiceState.busy = false;
+  choiceState.result = Object.assign({ at: Date.now() }, res || { ok: false, why: '无返回' });
+  choiceState.resultSig = choiceState.sig || '';
+  toast((res && res.ok ? '已点选 ' : '点选失败：') + (res && res.why ? res.why : ''), res && res.ok ? 'ok' : 'warn');
+  logLine('选择题点选 ' + (res && res.ok ? '成功' : '失败') + ' hwnd=' + hwnd +
+    ' letters=' + ((res && res.letters) || []).join('') + ' why=' + ((res && res.why) || '-'));
+  send('choice', publicChoice());
+  pushState();
+  return res;
 }
 
 /** 拼出 OCR 调用参数：视觉模型可以单独配接口与密钥，留空则复用「AI 解答」的 */
@@ -1221,8 +1445,11 @@ function autoInputFromSearch(res) {
   });
 
   const cand = cands[0];
+  const answer = String(cand.answer).trim();
+  /* 同步一次选择题判定：倒计时结束后要据此决定"点选"还是"打字" */
+  refreshChoice(answer);
   autoInputStart(
-    String(cand.answer).trim(),
+    answer,
     (SOURCE_LABEL[cand.source] || cand.source) + (cand.verify ? ' · 疑似，请核对' : ''),
     cand.source
   );
@@ -1273,7 +1500,14 @@ function autoInputCancel(why) {
   }
 }
 
-/** 倒计时结束：写进大框 → 切回学习通 → 逐字输入 */
+/**
+ * 倒计时结束后的动作：
+ *   选择题 + 开着自动点选 → 点选项（必要时再打字）
+ *   其余情况            → 原来的逐字输入
+ *
+ * 为什么选择题默认"只点不打"：把 "C" 打进选择题的输入框毫无意义，
+ * 反而可能污染答题记录。真要两样都做，用户可以把 clickThenType 打开。
+ */
 async function doAutoInput() {
   const text = autoInput.text;
   autoInput.text = '';
@@ -1287,12 +1521,33 @@ async function doAutoInput() {
   setDraftText(cleaned);
   pushState();
 
-  if (!engineReady) {
-    toast('输入引擎未就绪，已取消自动输入', 'error');
-    return;
-  }
   if (!lastMatchedHwnd) {
     toast('还没识别到学习通窗口，已取消自动输入。请先切到学习通一次再截图', 'warn');
+    return;
+  }
+
+  const ch = refreshChoice(cleaned);
+  if (st.autoClickChoice && ch.clickable) {
+    logLine('自动点选：hwnd=' + lastMatchedHwnd + ' 选项=' + ch.letters.join('') +
+      ' 题目选项数=' + ch.options.length);
+    engineFocus(lastMatchedHwnd);
+    await delay(420);
+    const cr = await clickChoiceNow({ hwnd: lastMatchedHwnd, answer: cleaned });
+    if (cr && cr.ok) {
+      pushHistory(cleaned + '  →  已点选 ' + ch.letters.join(''));
+      beep(false);
+      if (!st.clickThenType) return;
+      await delay(260);
+    } else if (cr && !cr.ok) {
+      /* 点选失败不静默：退回到"打字"，并把失败原因留在提示里，
+         因为用户此刻最需要知道的是"它到底点没点中"。 */
+      toast('自动点选没成功，改为直接输入答案文本', 'warn');
+      logLine('自动点选失败，退回打字：' + (cr.why || '-'));
+    }
+  }
+
+  if (!engineReady) {
+    toast('输入引擎未就绪，已取消自动输入', 'error');
     return;
   }
 
@@ -1507,6 +1762,8 @@ function publicState() {
     auto: { active: auto.active, remain: auto.remain },
     autoInput: publicAutoInput(),
     ocr: publicOcr(false),
+    subject: publicSubject(),
+    choice: publicChoice(),
     search: publicSearch(false),
     hotkeys: {
       main: hotkeyLabel(st.hotkeyMain),
@@ -1581,6 +1838,8 @@ function registerIpc() {
     if (patch && 'theme' in patch) applyThemeToWindow();
     if (patch && 'matchTitles' in patch) sendEngineConfig();
     if (patch && 'matchProcs' in patch) sendEngineConfig();
+    /* 手动指定学科后立刻重算，让 AI 提示词与界面标签同步 */
+    if (patch && 'subjectOverride' in patch) refreshSubject();
     updateTray();
     pushState();
     return publicState();
@@ -1589,6 +1848,10 @@ function registerIpc() {
   ipcMain.handle('app:setDraft', (e, text) => {
     S.draft = typeof text === 'string' ? text : '';
     store.set('draft', S.draft);
+    /* 这里必须跟着重算选择题判定：大框里的内容就是"当前答案"，
+       「点选答案」按钮取的正是这份判定。早前漏了这一句，
+       导致手动输入答案后按钮仍然显示"没有可点选的答案"。 */
+    refreshChoice(S.draft);
     return true;
   });
 
@@ -1747,6 +2010,21 @@ function registerIpc() {
   });
 
   /* ---------------- 搜答案 ---------------- */
+  /* ---- v1.3.0：学科与选择题点选 ---- */
+  ipcMain.handle('subject:set', (e, id) => {
+    const st = settings();
+    const v = String(id || '').trim();
+    st.subjectOverride = subjectLib.SUBJECTS.some((s) => s.id === v) ? v : '';
+    store.set('settings', st);
+    S = store.all();
+    refreshSubject();
+    pushState();
+    return publicSubject();
+  });
+
+  ipcMain.handle('choice:click', (e, payload) => clickChoiceNow(payload || {}));
+  ipcMain.handle('choice:state', () => publicChoice());
+
   ipcMain.handle('search:run', (e, payload) => runSearchNow(payload || {}));
 
   ipcMain.handle('search:fromClipboard', () => runSearchNow({ fromClipboard: true }));
@@ -1946,6 +2224,8 @@ app.on('window-all-closed', () => { if (isQuitting) app.quit(); });
 
 app.whenReady().then(() => {
   try { app.setAppUserModelId('com.xu.studyanswerhelper'); } catch (_) { /* 忽略 */ }
+  /* 磁盘上可能留着上次的题目，先算一次学科与选择题判定，免得界面显示为空 */
+  try { refreshSubject(); refreshChoice(S.draft || ''); } catch (_) { /* 忽略 */ }
   registerIpc();
   createWindow();
   createTray();
@@ -1964,6 +2244,7 @@ app.whenReady().then(() => {
   if (process.env.SP_SMOKE) runSmoke();
   if (process.env.SP_SEARCHTEST) runSearchTest();
   if (process.env.SP_CAPTURETEST) runCaptureTest();
+  if (process.env.SP_CLICKTEST) runClickTest();
 });
 
 /* ---------------- 自动化验证：交互级自检 ---------------- */
@@ -2032,8 +2313,9 @@ function runShots() {
     const shots = [
       { name: 'main-queue', view: 'queue', wait: 900, ocr: true, search: true },
       { name: 'main-history', view: 'history', wait: 700, ocr: true, search: true },
-      { name: 'main-search', view: 'search', wait: 1000, ocr: true, search: true },
-      { name: 'main-autoinput', view: 'search', wait: 900, ocr: true, search: true, autoInput: true },
+      { name: 'main-search', view: 'search', wait: 1000, ocr: true, search: true, subject: ['math', 0.83], choice: ['ABCD', null] },
+      { name: 'main-choice-picked', view: 'search', wait: 900, ocr: true, search: true, subject: ['math', 0.83], choice: ['ABCD', true] },
+      { name: 'main-autoinput', view: 'search', wait: 900, ocr: true, search: true, autoInput: true, subject: ['math', 0.83], choice: ['ABCD', null] },
       { name: 'main-settings', view: 'settings', wait: 700, ocr: true, search: true },
       { name: 'modal-bank', view: 'search', wait: 900, ocr: true, search: true, bankModal: true }
     ];
@@ -2045,6 +2327,15 @@ function runShots() {
         if (s.ocr) await exec('window.App && window.App.previewOcr && window.App.previewOcr(); true');
         if (s.search) await exec('window.App && window.App.previewSearch && window.App.previewSearch(); true');
         if (s.autoInput) await exec('window.App && window.App.previewAutoInput && window.App.previewAutoInput(5); true');
+        /* v1.3.0：学科条与选择题点选条也要出现在截图里，否则这两个新 UI 没有任何视觉留档 */
+        if (s.subject) {
+          await exec('window.App && window.App.previewSubject && window.App.previewSubject(' +
+            JSON.stringify(s.subject[0]) + ',' + s.subject[1] + '); true');
+        }
+        if (s.choice) {
+          await exec('window.App && window.App.previewChoice && window.App.previewChoice(' +
+            JSON.stringify(s.choice[0]) + ',' + (s.choice[1] === undefined ? 'null' : String(s.choice[1])) + '); true');
+        }
         if (s.bankModal) await exec('window.App && window.App.openBank && window.App.openBank(); true');
         await exec('window.__SP_SET_THEME__ && window.__SP_SET_THEME__(' + JSON.stringify(mode) + '); App.go(' + JSON.stringify(s.view) + '); true');
         await delay(s.wait);
@@ -2064,6 +2355,136 @@ function runShots() {
 }
 
 /* ---------------- 自动化验证：真实键盘注入冒烟测试 ---------------- */
+/**
+ * 选择题点选的端到端验证（SP_CLICKTEST）。
+ *
+ * 为什么要单独做这个：自检只能验"没窗口时如实失败"，而这条功能真正的风险是
+ * **它到底有没有点中**。所以这里开一个带真实单选按钮的窗口，让 UIA 去点，
+ * 再从页面里读回被选中的值 —— 点没点中一读便知。
+ *
+ * 两种定位方式都要验：
+ *   1) 名字带字母（"A. 3"）—— 正常排版
+ *   2) 名字只有内容（"3"）—— 必须靠"可选控件序号"兜底
+ */
+async function runClickTest() {
+  const { spawn } = require('child_process');
+  const result = { pass: [], fail: [], info: {} };
+  /* 打包后这个脚本要能被 spawn：asar 内的文件不能直接当可执行脚本传给子进程，
+     所以它进了 asarUnpack，这里也必须走 unpackAware 换成解包后的真实路径。 */
+  const script = unpackAware(path.join(__dirname, '..', '..', 'tools', 'click-target-win.ps1'));
+  const dir = os.tmpdir();
+  const hwndFile = path.join(dir, 'sah-click-hwnd.txt');
+  const resFile = path.join(dir, 'sah-click-result.txt');
+  let child = null;
+
+  const readFile = (f) => { try { return fs.readFileSync(f, 'utf8').trim(); } catch (_) { return ''; } };
+
+  /** 起一个原生 WinForms 目标窗口，等它把句柄写出来 */
+  async function openTarget(style) {
+    try { fs.unlinkSync(hwndFile); } catch (_) { /* 忽略 */ }
+    try { fs.unlinkSync(resFile); } catch (_) { /* 忽略 */ }
+    child = spawn('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', script,
+      '-HwndFile', hwndFile, '-ResultFile', resFile,
+      '-Style', style, '-LifetimeMs', '45000'
+    ], { windowsHide: true });
+    for (let i = 0; i < 40; i++) {
+      await delay(250);
+      const h = Number(readFile(hwndFile));
+      if (h > 0) { await delay(500); return h; }
+    }
+    return 0;
+  }
+
+  function closeTarget() {
+    if (!child) return;
+    try { child.kill(); } catch (_) { /* 忽略 */ }
+    child = null;
+  }
+
+  try {
+    await delay(1200);
+    /* tools/ 目前不会被打进 asar（只随开发态存在），所以打包模式下这个测试跑不了。
+       这不是缺陷，但要说清楚是"跳过"而不是"通过"，免得给人虚假的覆盖感。 */
+    if (!fs.existsSync(script)) {
+      result.skip = ['目标窗口脚本未随包分发（tools/ 不进 asar）：' + script];
+      logLine('CLICKTEST_RESULT ' + JSON.stringify(result));
+      isQuitting = true;
+      setTimeout(() => app.quit(), 300);
+      return;
+    }
+
+    /* ---- 第一轮：选项文字里带字母（"A. 3"，最常见的排版） ---- */
+    const h1 = await openTarget('name');
+    result.info.hwndNameStyle = h1;
+    if (!h1) throw new Error('WinForms 目标窗口没起来（拿不到句柄）');
+
+    const r1 = await optionClick.clickLetter({ hwnd: h1, letter: 'C', optionCount: 4, timeoutMs: 20000 });
+    result.info.nameMatch = {
+      ok: r1.ok, code: r1.code, how: r1.how, used: r1.used, name: r1.name,
+      type: r1.type, ms: r1.ms, err: r1.err, line: r1.line,
+      scanned: r1.scanned, attempts: r1.attempts, roots: r1.roots,
+      sample: r1.sample, tried: r1.tried, why: optionClick.describe(r1)
+    };
+    const g1 = readFile(resFile);
+    result.info.nameMatchPicked = g1;
+    if (r1.ok) result.pass.push('按选项文字定位并点中 → ' + optionClick.describe(r1));
+    else result.fail.push('按选项文字点选失败 → ' + optionClick.describe(r1) + ' ' + JSON.stringify(r1.sample || ''));
+    if (g1 === 'C') result.pass.push('目标窗口读回：确实选中了 C');
+    else result.fail.push('目标窗口读回不对：期望 C，实际 "' + g1 + '"');
+    closeTarget();
+    await delay(700);
+
+    /* ---- 第二轮：选项文字里没有字母（"3/4/5/6"）。
+       这时唯一可以依靠的是"可选控件数量恰好等于选项数"的序号兜底，而序号定位本身有误点风险，
+       所以本机这台 WinForms 窗口（单选按钮被系统桥接成 Pane，不是 RadioButton）读不到可选控件时，
+       正确行为就是**拒绝点选**而不是猜一个位置点下去。
+       这里断言的是"宁可点不中，也不能点错"。 ---- */
+    const h2 = await openTarget('plain');
+    result.info.hwndPlainStyle = h2;
+    if (!h2) throw new Error('第二个目标窗口没起来');
+
+    const r2 = await optionClick.clickLetter({ hwnd: h2, letter: 'D', optionCount: 4, timeoutMs: 20000 });
+    result.info.indexMatch = {
+      ok: r2.ok, code: r2.code, how: r2.how, used: r2.used, name: r2.name,
+      type: r2.type, ms: r2.ms, scanned: r2.scanned,
+      tried: r2.tried, why: optionClick.describe(r2)
+    };
+    const g2 = readFile(resFile);
+    result.info.indexMatchPicked = g2;
+    if (!r2.ok) {
+      result.pass.push('名称里没有选项字母时拒绝点选，没有瞎点 → ' + optionClick.describe(r2).slice(0, 60));
+    } else {
+      result.fail.push('名称里没有字母却仍然点了，有误点风险：' + JSON.stringify(r2));
+    }
+    if (!g2) result.pass.push('目标窗口确认：没有被误选任何选项');
+    else result.fail.push('目标窗口被误选成了 "' + g2 + '"');
+
+    /* ---- 第三轮：选项数量对不上时必须拒绝点，而不是点错 ---- */
+    const r3 = await optionClick.clickLetter({ hwnd: h2, letter: 'B', optionCount: 9, timeoutMs: 12000 });
+    result.info.countMismatch = { ok: r3.ok, how: r3.how, why: optionClick.describe(r3) };
+    if (!r3.ok) result.pass.push('选项数不符时拒绝点选（宁可不点，也不点错）');
+    else result.fail.push('选项数不符居然还点了，有误点风险 → ' + JSON.stringify(r3));
+    closeTarget();
+
+    /* ---- 第四轮：窗口句柄无效时如实失败 ---- */
+    const r4 = await optionClick.clickLetter({ hwnd: 999999999, letter: 'A', optionCount: 4, timeoutMs: 8000 });
+    result.info.badHwnd = { ok: r4.ok, code: r4.code, why: optionClick.describe(r4) };
+    if (!r4.ok && (r4.code === 'no-window' || r4.code === 'not-found')) {
+      result.pass.push('无效句柄如实失败 → ' + optionClick.describe(r4));
+    } else {
+      result.fail.push('无效句柄的返回不合预期 → ' + JSON.stringify(r4));
+    }
+  } catch (e) {
+    result.fail.push('fatal: ' + (e && e.stack ? e.stack : String(e)));
+  }
+  closeTarget();
+  logLine('CLICKTEST_RESULT ' + JSON.stringify(result));
+  isQuitting = true;
+  setTimeout(() => app.quit(), 300);
+}
+
 async function runSmoke() {
   const out = [];
   const W = (s) => { out.push(s); logLine('SMOKE ' + s); };

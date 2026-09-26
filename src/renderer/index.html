@@ -118,6 +118,14 @@
             <span class="ocr-label" id="ocrLabel">还没有识别过题目</span>
           </div>
 
+          <!-- 学科识别（v1.3.0）：决定 AI 按哪个学科的规范作答，自动识别不准时可手动指定 -->
+          <div class="subjrow" id="subjectRow">
+            <span class="chip" id="subjectChip">学科待定</span>
+            <span class="muted subj-why" id="subjectWhy">识别出题目后自动判断</span>
+            <span class="spacer"></span>
+            <select id="subjectSel" title="自动识别不准时手动指定学科"></select>
+          </div>
+
           <!-- 主操作：截图选题 -->
           <button class="primary slim" id="captureBtn">
             <span>截图选题</span><kbd id="kbdCapture">Ctrl+Alt+X</kbd>
@@ -136,6 +144,14 @@
           <textarea id="questionBox" class="qbox" spellcheck="false" readonly
             placeholder="点上面的「截图选题」，框选题目区域，识别结果会出现在这里。"></textarea>
           <div class="hint warnbox" id="ocrWarn" hidden></div>
+
+          <!-- 选择题点选（v1.3.0）：在学习通窗口里直接点中正确选项，不用手点 -->
+          <div class="choicerow" id="choiceRow">
+            <button class="mini" id="clickChoiceBtn"
+              title="在学习通窗口里自动点选正确选项（需要先切到学习通一次，让它识别到窗口）">点选答案</button>
+            <span class="opts" id="choiceOpts"></span>
+            <span class="muted choice-why" id="choiceWhy"></span>
+          </div>
 
           <button class="primary slim" id="searchBtn">
             <span>重新搜答案</span><kbd id="kbdSearch">Ctrl+Alt+F</kbd>
@@ -259,6 +275,28 @@
             <label class="row"><span>搜题热键（剪贴板取题）</span><select id="hotkeySearchSel"></select></label>
             <div class="hint">打开后：<b>截图 → 识别题目 → 搜答案 → 倒计时 → 自动切回学习通逐字输入</b>。
               倒计时期间按 <b>Esc</b> 或点「取消」可随时打断；输入前会先把答案写进左边大框，事后能查。</div>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">学科与选择题点选</div>
+            <label class="row"><span>学科识别</span><select id="subjectOverrideSel"></select></label>
+            <label class="row switchrow" id="autoClickRow">
+              <span>选择题：自动点选正确选项</span>
+              <span class="switch small"><input type="checkbox" id="autoClickChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <label class="row switchrow" id="clickThenTypeRow">
+              <span>点选之后，再把答案文本也输入一遍</span>
+              <span class="switch small"><input type="checkbox" id="clickThenTypeChk"><span class="track"><span class="knob"></span></span></span>
+            </label>
+            <div class="hint">
+              学科由本地词法特征自动判断（<b>不联网、不调模型</b>），用来切换 AI 的作答规范：
+              数学要步骤、英语要给译文、语文要出处、物理化学要公式与配平。判断不准就在这里手动指定。
+            </div>
+            <div class="hint">
+              自动点选走 Windows 的 <b>UI Automation</b>：在窗口里找到"名字以 A./B./C./D. 开头的可选控件"并选中它，
+              不依赖坐标，换分辨率或字体也不会失效。默认只点选不输入文本 —— 把字母打进选择题的输入框没有意义。
+              它需要先识别到学习通窗口（切过去一次即可），失败时会退回"直接输入答案文本"并提示原因。
+            </div>
           </div>
 
           <div class="setgroup">

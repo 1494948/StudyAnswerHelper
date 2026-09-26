@@ -70,7 +70,7 @@ env -u ELECTRON_RUN_AS_NODE NODE_TLS_REJECT_UNAUTHORIZED=0 \
 |---|---|
 | GitHub 仓库 | https://github.com/1494948/StudyAnswerHelper |
 | 分支 | `main` |
-| 当前版本 | v1.2.0 |
+| 当前版本 | v1.3.0 |
 | appId | `com.xu.studyanswerhelper` |
 | 安装包命名 | `StudyAnswerHelper-Setup-<版本>.exe`（NSIS，中文安装界面） |
 | 便携版命名 | `StudyAnswerHelper-Portable-<版本>.exe` |
@@ -100,7 +100,10 @@ StudyAnswerHelper/
 │   │       ├── answer-bank.js      # 本地题库（匹配 / 增删 / 批量导入导出）
 │   │       ├── answer-search.js    # 三源检索编排 + 搜狗/360/必应解析 + AI 客户端
 │   │       ├── ocr.js              # 识别编排：AI 视觉（主备双模型）+ 系统 OCR 兜底
-│   │       └── ocr-win.ps1         # WinRT Windows.Media.Ocr 的 PowerShell 桥（asarUnpack）
+│   │       ├── ocr-win.ps1         # WinRT Windows.Media.Ocr 的桥（asarUnpack）
+│   │       ├── subject.js          # 学科识别 + 选择题解析（纯词法，零依赖、离线）
+│   │       ├── option-click.js     # 选择题点选编排（逐个字母、失败即停、如实报告）
+│   │       └── option-click-win.ps1 # UI Automation 查找并选中选项（asarUnpack）
 │   └── renderer/
 │       ├── index.html              # 4 个标签页 + 题库弹窗
 │       ├── capture.html            # 全屏框选截图遮罩
@@ -112,8 +115,9 @@ StudyAnswerHelper/
 ├── tools/
 │   ├── make-icons.js               # 纯 Node 生成 PNG/ICO
 │   ├── make-question-image.js      # 纯 Node 生成"像照片"的示例题目图（离线测识别）
+│   ├── click-target-win.ps1        # 带真实单选按钮的 WinForms 目标窗口（SP_CLICKTEST 用）
 │   ├── probe-koffi.js              # koffi / FFI 假设验证探针
-│   └── selftest-script.js          # 注入渲染进程的自检脚本（SP_SELFTEST，39 项）
+│   └── selftest-script.js          # 注入渲染进程的自检脚本（SP_SELFTEST，49 项）
 ├── assets/                         # icon.ico / tray.ico / png / sample-question.png
 ├── preview/                        # 界面截图（含 dark/ 深色版）— 进仓库
 ├── release/                        # 交付目录 — gitignore
@@ -243,16 +247,65 @@ v1.2.0 起「搜答案」页顶部是**识别条**：`截图选题` 主按钮 + 
     只有 `win-unpacked`，从没真正产出过安装包。首次真正打包需要联网下载
     winCodeSign（约 2.5 MB），落到 `%LOCALAPPDATA%\electron-builder\Cache\winCodeSign` 后可离线复用。
 
+### 6.6 学科识别与选择题点选相关（v1.3.0 新增，全是实测踩出来的）
+
+35. **PowerShell 里 `/* */` 不是注释。** 我按 C/JS 习惯写了三行块注释，脚本直接报
+    「无法将"/*"项识别为 cmdlet…」。**PS 5.1 只有 `#` 行注释**。更麻烦的是：脚本一抛异常，
+    结果 JSON 就不生成，JS 侧只能报出无意义的 `no-result`。所以脚本里加了全脚本 `trap`，
+    把异常消息**和行号**写进结果文件 —— 否则只能靠一遍遍重新复现来定位。
+36. **`(单个 Hashtable)[0]` 是按键取值，不是按下标。** `$byName | Sort-Object {...}` 在只有
+    1 个命中时返回的是 Hashtable 而不是数组，`[0]` 会去找 key 为 0 的项 → 返回 `$null`。
+    现象极具迷惑性：`Test-LetterName` 明明返回了 `True`（诊断字段里能看到），
+    但 `$pick` 永远是空，最终报"没找到该选项"。**一律写 `@(...)[0]` 强制成数组。**
+    同类：`New-Object System.Drawing.Point(20, $y + 6)` 会被解析成 3 个参数，
+    必须写 `(20, ($y + 6))`。
+37. **Chromium 系窗口的无障碍树是"按需构建"的，第一次查询可能什么都读不到。**
+    实测本机沙箱下 Electron 窗口（`--no-sandbox --disable-gpu`）对 UIA 只暴露
+    18 个名为 `Chrome Legacy Window` 的 Pane 桩节点，加 `--force-renderer-accessibility`
+    也一样。而**真实 Edge 窗口第一次查询就返回 1138 个元素**（含页面内容与窗口按钮）。
+    所以脚本里主动给窗口发 `WM_GETOBJECT`(0x3D) 且 `lParam = UiaRootObjectId(-25)`
+    （用 `SendMessageTimeoutW` + `SMTO_ABORTIFHUNG`，避免被卡住的目标阻塞），
+    再配合"重试 + 全量 `TrueCondition` 遍历"。**这条要记住的是：目标程序读不到界面结构时，
+    要如实告诉用户"这个窗口没有暴露界面结构"，而不是含糊地说"没找到选项"。**
+38. **把子窗口也当作查找根。** 内容树可能挂在子 HWND 上，只扫顶层 frame 会漏。
+    `Get-Roots` 会枚举到 2 层子窗口，逐个尝试。
+39. **自检里的"重复内容"不能靠模糊匹配定位。** 判定签名 `sig` 一开始只含
+    `isChoice + 选项 + 答案字母`，结果"两道都是 ABCD、答案都是 B"的题签名相同，
+    界面会把上一题的失败提示挂到这一题上。**签名里必须带上题干指纹**（`textHash`）。
+40. **大框内容走的是 `app:setDraft`，不是 `setDraftText`。** 前者原来直接写 `S.draft`，
+    绕过了 `refreshChoice`，于是"手动输入答案后，点选按钮仍显示没有可点选的答案"。
+    **任何修改 `S.draft` 的入口都必须同步重算选择题判定**。
+42. **被 spawn 的 .ps1 必须把 asar 路径改写成 asar.unpacked 路径。**（本版最严重的一个坑）
+    `lib/option-click.js` 一开始照着 `path.join(__dirname,'xxx.ps1')` 拼路径，前面的
+    `fs.existsSync` 检查**能通过**（Electron 的 fs 读得懂 asar 虚拟路径），
+    但把这个路径当 `-File` 参数交给脚本宿主时，宿主看到的是虚拟路径，直接报
+    「`-File` 形式参数的实际参数 …app.asar\src\main\lib\option-click-win.ps1 不存在」。
+    结果是**开发态一切正常、打包版点选完全不可用**。
+    `lib/ocr.js` 里的 `psScriptPath()` 早就做了这个替换，新写的模块漏了。
+    **规矩：凡是要交给外部进程执行的文件（.ps1 / .exe / .cmd），路径一律先做
+    `replace(/app\.asar([\\/])/,'app.asar.unpacked$1')` 并确认文件真的存在。**
+    另外：`tools/` 里的 `.ps1` 确实会进 asar 也会被 `asarUnpack` 解包（我一度以为没有），
+    判断这件事不要靠 `strings app.asar | grep`，要用实测 —— 直接跑一次那个测试模式。
+43. **断言不要写成"不是某个坏值就算过"。** 自检里最初写的是
+    `assert(code !== 'spawn-failed')`，结果上层没有透传 `code`，`code` 是 `undefined`，
+    断言**恒真**、什么都没验证。改成"必须是脚本自己产生的错误码白名单之一"之后，
+    立刻暴露了上面那个 asar 路径缺陷。**凡是"排除法"断言，都要再问一句：
+    如果这个字段根本不存在，它会通过吗？**
+44. **演示预览要被动的状态推送覆盖。** `previewAutoInput` 只是自检/截图用的演示，
+    但任何一次 `pushState` 都会按真实状态把它关掉，断言就会随机地"浮层没有显示"。
+    现在预览有 8 秒保护期，只有真正的 `autoinput` 事件能覆盖它。
+
 更完整的坑清单与自动化验证方案见技能 `electron-desktop-app`。
 
 ## 7. 自检与验证（改代码后必跑）
 
 ```bash
-set SP_SELFTEST=1 && npm start       # 交互级自检 39 项（离线可复现）
+set SP_SELFTEST=1 && npm start       # 交互级自检 49 项（离线可复现）
 set SP_SMOKE=1 && npm start          # 真实键盘注入冒烟
-set SP_SHOT=1 && npm start           # 视觉走查截图（6 个页面 × 2 套主题）
+set SP_SHOT=1 && npm start           # 视觉走查截图（7 个页面 × 2 套主题）
 set SP_SEARCHTEST=1 && npm start     # 真实联网检索链路（需要网络，结果只写日志）
 set SP_CAPTURETEST=1 && npm start    # 真实「框选截图 → 裁剪 → 识别」链路（本机会真开遮罩窗口）
+set SP_CLICKTEST=1 && npm start      # 真实「选择题自动点选」链路（会开一个带单选按钮的窗口）
 node tools/make-question-image.js    # 先造一张示例题目图，给 ocr:test 用
 ```
 
@@ -291,6 +344,31 @@ SP_CAPTURETEST  遮罩窗口 1920×1080（与屏幕一致）、底图 1:1 未被
                 遮罩关闭、主窗口恢复
 ```
 
+v1.3.0 验证结果：
+
+```
+开发态 / 打包版 win-unpacked / 便携版：SP_SELFTEST 均为 50 项通过 / 0 项失败 / 0 个 JS 错误
+SP_SELFTEST     50 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+                （新增 10 项：学科识别正确性/手动覆盖/非法值拒绝、
+                  选择题选项与答案字母解析、多选 AC、纯数字答案禁用、
+                  非选择题如实说明、无窗口时失败且不卡住按钮、两个开关落盘）
+SP_SMOKE         5 项通过 / 0 项失败
+SP_SHOT         7 个页面 × 2 套主题，含新增 main-choice-picked.png
+SP_CLICKTEST     6 项通过 / 0 项失败 —— 这是本版最有价值的一条：
+                 对着一个带真实单选按钮的 WinForms 窗口，
+                 「按选项文字定位」→ 真的点中，并从目标窗口读回确认选中了 C；
+                 「名称里没有选项字母」→ 拒绝点选，目标窗口确认没有被误选；
+                 「选项数与实际可选控件数不符」→ 拒绝点选；
+                 「无效句柄」→ 如实失败并给出可操作提示
+```
+
+**`SP_CLICKTEST` 的适用范围（务必知情）**：它验证的是**匹配与调用逻辑**（找元素 → 选中 →
+回读确认）。本机无法用它验证"真实浏览器页面里的选项" —— 原因见 6.6 第 37 条：
+沙箱下的 Electron 窗口不暴露无障碍树，而代码里那条"序号兜底"路径需要真正的
+`RadioButton` 类型控件才能触发，本机 WinForms 窗口的单选按钮被系统桥接成 `Pane`，
+所以那条兜底路径**在本机未被覆盖**。它的作用是"当名称匹配失败、且可选控件数量恰好
+等于选项数时，按序号点第 n 个"，且数量不符时一律拒绝 —— 设计上偏向"宁可不点"。
+
 **坐标映射的自检要点**（这是本版最容易悄悄坏掉的地方）：
 `SP_CAPTURETEST` 会在"关掉放大"的前提下，把裁剪图左上角 16×16 与整屏截图对应位置的
 16×16 做逐字节比对。只要 DPI 换算、遮罩窗口尺寸、底图 CSS 尺寸任何一处错了，
@@ -327,5 +405,9 @@ SP_CAPTURETEST  遮罩窗口 1920×1080（与屏幕一致）、底图 1:1 未被
 | 2026-09-24 | 修掉退出时最后一次改动静默丢失 | `store` 是 160ms 合并延迟写盘，`app.on('before-quit')` 里没有强制 flush，导致"刚识别完就关掉"丢题目。已在退出钩子里补 `store.flush()` + 题库 flush |
 | 2026-09-24 | 打包并归档 v1.2.0 | **首次真正产出安装包**：历史上 `--dir` 不下载 winCodeSign，所以 `dist-installer-v1~v4` 里只有 `win-unpacked`。本机代理做 TLS 中间人导致 `unable to verify the first certificate`，改用 `curl -k` 预取 winCodeSign-2.6.0.7z（sha256 与官方 `cdaec715…16743a4` 完全一致）放入缓存后，构建 1m40s 通过，退出码 0。产物 `dist-installer-v5`（Setup 79,057,649 B / Portable 78,922,985 B，均 MZ 头 + Nullsoft 特征），归档到 `releases\StudyAnswerHelper\v1.2.0\`（MD5 逐一比对一致）。开发态 + win-unpacked + 便携版三处各跑过 SP_SELFTEST 39/0、SP_SMOKE 5/0，win-unpacked 另跑通 SP_CAPTURETEST 全绿 |
 | 2026-09-24 | 删除误生成的垃圾文件 `--disable-gpu` | 另一个模型在用 `make-question-image.js` 时把 electron 的开关参数当成了输出文件名，生成了一个 28,812 B 的 PNG。经用户确认删除；同时修掉 `make-question-image.js` 的 argv 解析（过滤 `-` 开头的开关） |
+| 2026-09-25 | **v1.3.0：学科识别 + 选择题自动点选** | 新增 `lib/subject.js`（10 个学科的纯词法打分识别 + 选择题/答案字母解析，离线零依赖）与 `lib/option-click.js` + `option-click-win.ps1`（走 Windows UI Automation 在学习通窗口里找并选中正确选项）；AI 提示词由"你是数学老师"改为"全科答疑老师"+ 按学科追加作答规范；新增 `SP_CLICKTEST` 端到端测试与 `tools/click-target-win.ps1` 目标窗口 |
+| 2026-09-25 | v1.3.0：界面新增学科条与选择题点选条 | 「搜答案」页在识别状态下方显示学科标签（含置信度与判断依据）+ 快捷切学科下拉；题目框下方新增「点选答案」按钮 + 选项字母高亮（正确答案高亮、其余淡化）+ 结果说明。设置页新增「学科与选择题点选」分组（学科覆盖、自动点选、点选后是否仍输入文本） |
+| 2026-09-25 | 修掉 4 个会让新功能"看起来没生效"的缺陷 | ① `app:setDraft` 绕过 `refreshChoice`，手动输答案后仍显示"没有可点选的答案"；② 题目变更时未重算选择题判定，会拿上一题的选项去点；③ 判定签名不含题干指纹，两道同选项同答案的题会串提示；④ 点选提前返回时不发 `choice` 事件，渲染层按钮永久卡在"点选中…" |
+| 2026-09-25 | 点选实现方式的关键取舍（有实测依据） | ① 不用"记住选项坐标再点"——坐标随分辨率/缩放/滚动必然失效，UIA 拿的是语义元素；② 不用键盘发字母——多数答题页没把字母键绑成选中，盲发只会把字母打进输入框；③ Chromium 系窗口无障碍树按需构建，脚本主动发 `WM_GETOBJECT`+`UiaRootObjectId` 唤醒并重试；④ 选项数与实际可选控件数不符时**拒绝点选**，宁可点不中也不能点错 |
 | 2026-09-24 | 推送 v1.2.0 到 GitHub | `ls-remote` 探明远端 main 停在 `89bedf1` == 本地 HEAD，可快进，未强推。提交 `9c83bfd`（29 文件 / +2977 / −245），推送 `main`（`89bedf1..9c83bfd`）+ 注解标签 `v1.2.0`，无认证弹窗。推后核验：远端 `refs/heads/main` == `refs/tags/v1.2.0^{}` == 本地 HEAD == `9c83bfd`。仓库 47 个跟踪文件 / `.git` 2.9 MB（exe 未进仓库，走 Releases 附件）|
 | 2026-09-24 | 清理 v1.2.0 产生的垃圾（工作台 1.21 GB → 817.2 MB） | 释放约 418 MB：① `cleanup.py --clean --aggressive -y` 清掉 v1~v4 旧构建壳与 v5 的 `win-unpacked`，v5 从 417.9 MB 降到 327 KB；② 用 ctypes `DeleteFileW` 删掉 v5 里与 `releases\v1.2.0\` MD5 完全一致的 2 个 exe + blockmap + latest.yml + builder-debug.yml，释放 150.7 MB；③ 清空 `playground/ocr-capture`（本次验证日志/截图/脚本）与 `playground/search-answer-feature`（v1.1.0 遗留），释放 4.68 MB。**残留 908.1 KB 是 5 个旧 `win-unpacked` 空壳（含被进程占用的 `app.asar`，错误码 32），按规范不反复重试，重启后重跑 `cleanup.py` 即可** |

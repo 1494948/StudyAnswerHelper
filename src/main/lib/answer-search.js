@@ -302,14 +302,28 @@ function webToCandidates(question, items, engineLabel, topN) {
 
 /* ================= AI 解答（OpenAI 兼容协议） ================= */
 
-const AI_SYSTEM_PROMPT = [
-  '你是经验丰富的数学老师，负责给出题目的标准答案。',
+/* 提示词由三段拼成：角色（全科）+ 学科补充 + 输出格式。
+   角色那句从 v1.3.0 起改成"全科"，不再写死数学 —— 原来的写法会把语文题
+   也按数学口味答（只给结果不给出处），英语题甚至会被要求"化简"。 */
+const AI_ROLE = '你是一名经验丰富的全科答疑老师，数学、语文、英语、物理、化学、生物、历史、地理、道德与法治、信息技术都能胜任，负责给出题目的标准答案。';
+
+const AI_FORMAT = [
   '严格按下面的格式回答，不要输出任何多余内容：',
-  '第一行：【答案】只写最终答案。选择题只写选项字母（如 A）；填空题只写结果本身，不要写"答案："等前缀。',
+  '第一行：【答案】只写最终答案。选择题只写选项字母（如 A）；多选题按字母顺序连写（如 AC）；' +
+    '填空题只写结果本身，不要写"答案："等前缀。',
   '第二行起：【解析】用简洁的步骤说明理由。',
   '如果题目信息不全或含多个小问，在【解析】里说明，并把最可能的标准答案放在【答案】那行。',
   '公式用普通字符书写（如 a^2+b^2、√3、π、≤），不要用 Markdown 代码块。'
 ].join('\n');
+
+/** 按学科拼提示词。subjectHint 为空或低置信度时用通用版。 */
+function buildAiPrompt(subjectHint) {
+  const hint = String(subjectHint || '').trim();
+  return hint ? (AI_ROLE + '\n' + hint + '\n' + AI_FORMAT) : (AI_ROLE + '\n' + AI_FORMAT);
+}
+
+/* 兼容旧调用点与自检：不带学科补充的通用版本 */
+const AI_SYSTEM_PROMPT = buildAiPrompt('');
 
 function aiEndpoint(baseUrl) {
   const base = String(baseUrl || '').trim().replace(/\/+$/, '');
@@ -328,7 +342,7 @@ async function askAi(question, cfg) {
   const body = {
     model: model,
     messages: [
-      { role: 'system', content: AI_SYSTEM_PROMPT },
+      { role: 'system', content: buildAiPrompt(c.subjectHint) },
       { role: 'user', content: String(question) }
     ],
     temperature: typeof c.temperature === 'number' ? c.temperature : 0.2,
