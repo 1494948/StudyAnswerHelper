@@ -5,20 +5,24 @@
 
 ## 1. 定位
 
-Windows 桌面工具。两件事：
+Windows 桌面工具。三件事：
 
 1. **输入答案** —— 左边一个大输入框写答案，切到学习通（超星）窗口后按一个热键，
    程序用**模拟键盘输入**（SendInput）把答案逐字打进答题框，绕过学习通禁止复制粘贴的限制。
 2. **搜答案**（v1.1.0 新增）—— 把题目贴进来，三路答案来源并发检索：
    本地题库（离线）/ 网络检索（搜狗 → 360 → 必应）/ AI 解答（OpenAI 兼容接口），
    结果按相关度排序，一键填进大框，再走上面那条输入链路。
+3. **富文本输入**（v1.4.0 新增）—— 答案里用 `$…$` 标数学公式、用 ``` 标代码块，
+   公式会被转成 Unicode 数学符号（√ ≤ π a² ⁻³ …）后逐字输入；
+   开 `editor` 档还会去点**学习通自带的「公式」「代码」按钮**，走它自己的排版能力。
+   **没被标记的内容一个字都不动。**
 
 | 项 | 值 |
 |---|---|
 | 中文名 / 产品名 | 学习通答题助手 |
 | 目录名 | `projects/StudyAnswerHelper`（与 GitHub 仓库名逐字一致） |
-| 状态 | **可用** — v1.1.0 已打包验证 |
-| 最后更新 | 2026-09-24 |
+| 状态 | **可用** — v1.4.0 源码已推送（本轮未重打安装包，见 §8） |
+| 最后更新 | 2026-10-08 |
 
 ## 2. 技术栈
 
@@ -46,6 +50,17 @@ node tools/make-question-image.js   # 生成示例题目图（assets/sample-ques
 npm run build      # 打包（输出目录见 package.json 的 build.directories.output）
 npm run build:dir  # 只生成 win-unpacked，不生成安装包
 ```
+
+**校准学习通的公式/代码按钮名（v1.4.0 新增）**：
+
+```bash
+node tools/probe-uia.js --list                 # 列出当前可见的顶层窗口，找到学习通那个
+node tools/probe-uia.js --match 学习通           # 按标题关键字直接定位并导出元素清单
+node tools/probe-uia.js --hwnd <句柄> --json report.json   # 导出完整清单到文件
+```
+
+跑之前请把**学习通答题页切到前台**（浏览器里的学习通可以，桌面客户端不行，见 §6.8）。
+把输出里「疑似公式/代码相关的元素」那些名字填进设置页「公式与代码输入 → 按钮名」即可。
 
 打包时**显式指定一个新的输出目录**，否则会被本环境的删除钩子拦下：
 
@@ -103,7 +118,11 @@ StudyAnswerHelper/
 │   │       ├── ocr-win.ps1         # WinRT Windows.Media.Ocr 的桥（asarUnpack）
 │   │       ├── subject.js          # 学科识别 + 选择题解析（纯词法，零依赖、离线）
 │   │       ├── option-click.js     # 选择题点选编排（逐个字母、失败即停、如实报告）
-│   │       └── option-click-win.ps1 # UI Automation 查找并选中选项（asarUnpack）
+│   │       ├── option-click-win.ps1 # UI Automation 查找并选中选项（asarUnpack）
+│   │       ├── richinput.js        # v1.4.0 富文本输入：分词 + LaTeX→Unicode（纯函数）
+│   │       ├── rich-insert.js      # v1.4.0 富输入编排：驱动自带公式/代码按钮 + 回退
+│   │       ├── uia-tool.js         # v1.4.0 通用 UIA：按名字找元素 / 枚举元素（校准用）
+│   │       └── uia-tool-win.ps1    # v1.4.0 上者的 PowerShell 实现（asarUnpack）
 │   └── renderer/
 │       ├── index.html              # 4 个标签页 + 题库弹窗
 │       ├── capture.html            # 全屏框选截图遮罩
@@ -116,8 +135,10 @@ StudyAnswerHelper/
 │   ├── make-icons.js               # 纯 Node 生成 PNG/ICO
 │   ├── make-question-image.js      # 纯 Node 生成"像照片"的示例题目图（离线测识别）
 │   ├── click-target-win.ps1        # 带真实单选按钮的 WinForms 目标窗口（SP_CLICKTEST 用）
+│   ├── rich-target-win.ps1         # 伪装成学习通答题框的窗口（SP_RICHTEST 用）
+│   ├── probe-uia.js                # v1.4.0 探测工具：导出某窗口的无障碍元素清单（校准按钮名）
 │   ├── probe-koffi.js              # koffi / FFI 假设验证探针
-│   └── selftest-script.js          # 注入渲染进程的自检脚本（SP_SELFTEST，49 项）
+│   └── selftest-script.js          # 注入渲染进程的自检脚本（SP_SELFTEST，50 项）
 ├── assets/                         # icon.ico / tray.ico / png / sample-question.png
 ├── preview/                        # 界面截图（含 dark/ 深色版）— 进仓库
 ├── release/                        # 交付目录 — gitignore
@@ -286,6 +307,10 @@ v1.2.0 起「搜答案」页顶部是**识别条**：`截图选题` 主按钮 + 
     `replace(/app\.asar([\\/])/,'app.asar.unpacked$1')` 并确认文件真的存在。**
     另外：`tools/` 里的 `.ps1` 确实会进 asar 也会被 `asarUnpack` 解包（我一度以为没有），
     判断这件事不要靠 `strings app.asar | grep`，要用实测 —— 直接跑一次那个测试模式。
+    > **v1.4.0 复查**：新增 `src/main/lib/uia-tool-win.ps1` 时又差点重演 ——
+    > JS 侧的 `scriptPath()` 做了 asar 改写，但 `package.json` 的 `asarUnpack` 名单
+    > **必须同步加一行**，否则改写到 `app.asar.unpacked\...` 之后文件并不存在。
+    > 这是"改写 + 解包"两件事必须成对出现，漏掉任何一件都是打包版才炸。
 43. **断言不要写成"不是某个坏值就算过"。** 自检里最初写的是
     `assert(code !== 'spawn-failed')`，结果上层没有透传 `code`，`code` 是 `undefined`，
     断言**恒真**、什么都没验证。改成"必须是脚本自己产生的错误码白名单之一"之后，
@@ -295,17 +320,70 @@ v1.2.0 起「搜答案」页顶部是**识别条**：`截图选题` 主按钮 + 
     但任何一次 `pushState` 都会按真实状态把它关掉，断言就会随机地"浮层没有显示"。
     现在预览有 8 秒保护期，只有真正的 `autoinput` 事件能覆盖它。
 
+### 6.7 富文本输入与"自动点学习通按钮"相关（v1.4.0 新增，全是实测踩出来的）
+
+45. **PowerShell 变量名不区分大小写 —— 一个局部 `$req` 直接把参数 `-Req` 清空了。**
+    `uia-tool-win.ps1` 里写了 `$req = $null`（想当局部变量用），而参数就叫 `-Req`，
+    于是脚本一进 try 就把参数置空，`ReadAllText($Req)` 报「空路径名是非法的」，
+    外层只看到 `bad-request`、完全没有指向性。
+    **规矩：PowerShell 脚本里局部变量名不要和参数同名（哪怕大小写不同）。**
+46. **`ShowDialog()` 的窗口接受输入、正常绘制，但跨进程 UIA 查询拿到的后代数是 0。**
+    这是本次最费时间的一个坑，也是**经过受控实验确认**的因果结论：把
+    `tools/rich-target-win.ps1` 在 `Show()` + `Application::Run()` 与 `ShowDialog()` 之间
+    来回切换、其余代码一字不改 —— 前者 `scanned=5` 且能点中按钮，后者恒为 `scanned=0`。
+    现象极具迷惑性：窗口可见、手打字符能进去、`AutomationElement.FromHandle` 也成功，
+    只有 `FindAll` 返回空，且**不抛异常**。
+    → 需要被 UIA 读取的测试窗口，一律用 `Show()` + `Application::Run()`。
+47. **`FindAll(Descendants, TrueCondition)` 不是可靠路径。** 本次把它换成了
+    option-click-win.ps1 早就验证过的"按 ControlType 逐个 PropertyCondition 查询"，
+    并把 TrueCondition 降级成最后的兜底。打包时保留两者，是因为"按类型"是快路径而非保证
+    （见 6.6 第 37 条的同类经验）。
+48. **学习通桌面客户端不暴露页面无障碍树，浏览器才暴露。** 实测：客户端窗口
+    （`Chrome_WidgetWin_1`，标题「学习通」）只能读到 3 个名为 `Chrome Legacy Window`
+    的空 Pane；同一个 Edge 窗口能读到 **681 个控件、130 个有名字**，连页面上的
+    `Copy code to clipboard` 这类按钮都在。
+    → **「自动点学习通自带公式/代码按钮」这条路只对浏览器里的学习通可行。**
+    默认档位因此定为 `unicode`（不碰学习通界面），`editor` 档是可选增强。
+49. **PS 5.1 里嵌套在 Hashtable 中的空数组会序列化成 `{}` 而不是 `[]`。**
+    `patterns = @()` 经 `ConvertTo-Json` 出来是 `{}`，JS 侧 `.join()` 直接抛
+    `TypeError: join is not a function`。改成返回**斜杠连接的字符串**，彻底避开这个歧义。
+50. **`System.Windows.Automation.LegacyIAccessiblePattern` 在本机 PS 5.1 里不可解析。**
+    引用它就报「找不到类型」，而脚本的 `trap` 会把整次扫描变成一个笼统的
+    `script-error`。现在不再探测这个 pattern —— 它对我们的用途没有增量。
+51. **代码围栏后面那枚换行不能被吃掉。** 分词器最初把关闭围栏后的 `\n` 一起跳过，
+    于是"代码块下面那一行"会和代码粘成一行（`x=1完毕`）。现在围栏只吃到关闭行的末尾，
+    换行留给后续文本片段。
+52. **本机桌面会被其他程序周期性抢焦点，UI 测试因此天然带随机性。**
+    实测测试期间 WorkBuddy / msedge 反复激活自己，而焦点门控遇到"中途失焦"会
+    **按设计**停手，于是同一条链路有时通过、有时停在半路。
+    → `SP_RICHTEST` 的正常组允许最多 5 次重试；若用尽重试后**所有失败都是
+    `focus-lost` / `focus-timeout`**，就报成 **skip（跳过）并写明原因**，而不是
+    "通过"、也不是"失败" —— 没验证到的东西不能给人虚假的覆盖感，但纯属桌面噪声的
+    东西也不该记成受测逻辑的缺陷。失败里只要出现别的错误码（例如 `not-found`），
+    就一律按真实失败上报。实际尝试次数与环境噪声判定都会写进结果 JSON。
+
+### 6.8 富输入的产品判断（写下来免得以后被"简化"掉）
+
+- **默认档位是 `unicode`，不是 `editor`。** 前者只改被标记过的内容、不碰学习通界面、
+  离线可验证；后者要依赖对方窗口暴露无障碍接口，失败模式更多。
+- **任何一步失败都回退成纯文本，并且如实记账。** 一份答案里可能有 5 个公式，
+  其中 1 个因工具栏被滚动出视口而点不到 —— 把整份答案丢掉，比"1 个降级、其余照常"糟糕得多。
+- **绝不"自作主张"转换未标记的内容。** `a^2` 在没被 `$…$` 包住时必须原样输入，
+  `1/2` 绝不能被偷改成 `½`。这是产品红线。
+
 更完整的坑清单与自动化验证方案见技能 `electron-desktop-app`。
 
 ## 7. 自检与验证（改代码后必跑）
 
 ```bash
-set SP_SELFTEST=1 && npm start       # 交互级自检 49 项（离线可复现）
+set SP_SELFTEST=1 && npm start       # 交互级自检 74 项（离线可复现，含富输入纯函数断言）
 set SP_SMOKE=1 && npm start          # 真实键盘注入冒烟
 set SP_SHOT=1 && npm start           # 视觉走查截图（7 个页面 × 2 套主题）
 set SP_SEARCHTEST=1 && npm start     # 真实联网检索链路（需要网络，结果只写日志）
 set SP_CAPTURETEST=1 && npm start    # 真实「框选截图 → 裁剪 → 识别」链路（本机会真开遮罩窗口）
 set SP_CLICKTEST=1 && npm start      # 真实「选择题自动点选」链路（会开一个带单选按钮的窗口）
+set SP_FOCUSTEST=1 && npm start      # v1.4.0 焦点门控：对照组必须复现"开头丢字"，修复组必须一个字不丢
+set SP_RICHTEST=1 && npm start       # v1.4.0 富输入：对着模拟答题框真点「公式/代码/确定」按钮
 node tools/make-question-image.js    # 先造一张示例题目图，给 ocr:test 用
 ```
 
@@ -362,6 +440,58 @@ SP_CLICKTEST     6 项通过 / 0 项失败 —— 这是本版最有价值的一
                  「无效句柄」→ 如实失败并给出可操作提示
 ```
 
+v1.4.0 验证结果（开发态；本轮未重打安装包）：
+
+```
+SP_SELFTEST     74 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+                （新增 24 项：LaTeX→Unicode 的上标/下标/希腊字母/根号/求根公式/定积分/角度、
+                  "货币 $ 不误判"、"\$ 转义"、代码围栏识别、
+                  off/unicode/editor 三档行为差异、
+                  "未标记文本一字不改"、按钮名解析、非法档位回落、
+                  以及"读不到控件"的提示必须区分于"没找到按钮"）
+SP_SMOKE         5 项通过 / 0 项失败（键盘注入 21 字逐字一致，456ms）
+SP_FOCUSTEST     4 项通过 / 0 项失败 —— 对照组复现"开头丢失"（目标 0/37、诱饵 37），
+                 修复组目标完整拿到 37 字、诱饵 0 字；中途被抢焦点时在第 6 字停手且不漏字
+SP_RICHTEST      9 项通过 / 0 项失败 / 0 项跳过 —— 这是本版最有价值的一条：
+                 对一个模拟答题框窗口真点「公式」→ 弹窗输入 LaTeX → 点「确定」→ 落进答题框；
+                 代码块同理；顺序保持"前缀 → 公式 → 中缀 → 代码 → 后缀"一个不丢；
+                 把按钮名改成不存在的名字时必须**回退成纯文本**（写出 1/2）且不伪装成公式；
+                 目标句柄无效时如实失败、不假报成功
+                 （正常组第 4 次尝试才通过：本机桌面被其他程序反复抢焦点，属环境噪声，
+                   见 §6.7 第 52 条；报告里会把尝试次数与"是否纯环境噪声"一并写出来）
+```
+
+`SP_RICHTEST` 的输出示例（模拟窗口回读的答题框内容，可见顺序与完整性）：
+
+```
+开头这几个字要在 [FORMULA:\frac{1}{2}] 与
+[CODE:
+print("hi")
+]
+之间不能丢
+```
+
+**`SP_RICHTEST` 的覆盖率说明（务必知情）**：它验证的是**机制**——按名字匹配控件、
+调用 UIA 接口、焦点交接、顺序、回退。真实学习通是浏览器里的 UEditor 页面，
+它的工具栏按钮无法在模拟窗口里 1:1 复现；**"真实按钮叫什么名字"必须靠
+`tools/probe-uia.js` 在真实环境里校准**（本轮尝试校准但用户的学习通在桌面客户端里，
+客户端不暴露页面结构，故默认档位保持 `unicode`，见 §6.7 第 48 条）。
+
+**打包版验证（`--dir` 产物，`dist-installer-v9\win-unpacked`）**：
+
+```
+SP_SELFTEST     74 项通过 / 0 项失败 / 0 个渲染层 JS 错误
+SP_RICHTEST      8 项通过 / 0 项失败 / 0 项跳过（第 1 次尝试即通过）
+
+另核对：resources/app.asar.unpacked/src/main/lib/uia-tool-win.ps1
+        resources/app.asar.unpacked/tools/rich-target-win.ps1
+        两份被 spawn 的脚本都确实解包到了，且打包版能按改写后的路径读到 ——
+        这是"脚本路径 asar 改写 + asarUnpack 名单必须成对出现"的实测证据（见 §6.6 第 42 条）。
+```
+
+> 本轮只做 `--dir`（不产出 Setup/Portable），目的是验证打包路径而不是发版；
+> 产物目录 `dist-installer-v9` 属构建中间产物，按规范不长期保留。
+
 **`SP_CLICKTEST` 的适用范围（务必知情）**：它验证的是**匹配与调用逻辑**（找元素 → 选中 →
 回读确认）。本机无法用它验证"真实浏览器页面里的选项" —— 原因见 6.6 第 37 条：
 沙箱下的 Electron 窗口不暴露无障碍树，而代码里那条"序号兜底"路径需要真正的
@@ -413,6 +543,12 @@ SP_CLICKTEST     6 项通过 / 0 项失败 —— 这是本版最有价值的一
 | 2026-09-25 | 修掉一条"恒真"的自检断言 | 原来写的是 `assert(code !== 'spawn-failed')`，但上层 `clickAnswer`/`fail()` 都没有透传 `code`，`code` 是 `undefined`，断言恒真。改成"必须是脚本产生的错误码白名单之一"后**立刻暴露了上面那个 asar 路径缺陷**。教训写进 6.6 第 43 条 |
 | 2026-09-25 | 打包并归档 v1.3.0 | 输出目录 `dist-installer-v8`（本机安全删除钩子不允许复用已填充的输出目录，改用一个全新目录名；构建用 `--config.electronDownload.isVerifyChecksum=false` 绕过代理 502 导致的校验文件拉取失败）。产物 Setup 79,083,092 B / Portable 78,948,431 B，归档到 `releases\StudyAnswerHelper\v1.3.0\`（MD5 逐一比对一致）。三处产物各跑：SP_SELFTEST 50/0、SP_SMOKE 5/0，win-unpacked 另跑通 SP_CLICKTEST 6/0 |
 | 2026-09-25 | 清理 v1.3.0 产生的垃圾（工作台 2.43 GB → 约 1.10 GB） | ① `cleanup.py --clean --aggressive -y` 清掉 v6/v7 的 `win-unpacked` 与 v1~v5 旧壳；② ctypes 删掉 v8 里与归档 MD5 一致的 2 个 exe + blockmap + latest.yml + builder-debug.yml，释放 150.8 MB；③ 清空 `playground/v13`（本次验证产物）与 2 个散落脚本，释放 0.21 MB |
+| 2026-10-08 | **v1.4.0（一）：修掉"还没点学习通就在后台自动输入、前面答案没输进去"** | 用户报的原文就是这个。根因是自动输入的老写法 `engineFocus(目标窗口) + 固定 delay(420ms) + 立即逐字注入`：Windows 的前台切换是异步的、还可能被前台锁定拒绝，420ms 不够时开头若干字符就落进了仍持有焦点的那个窗口。改为**焦点门控**：把期望窗口交给引擎，由引擎等它真的到前台再开打（`FOCUSTEST` 实测切窗+激活需 100~600ms），**等不到就一个字都不发**并如实提示；打字途中被抢焦点也停手，且失焦期间一个字都不发（早期"失焦累计 250ms 才判定"的写法实测会漏 2 个字到别的窗口）。新增 `SP_FOCUSTEST`，用两个真实窗口把"对照组必须复现缺陷 / 修复组必须一字不丢 / 句柄无效必须一字不发"钉死 |
+| 2026-10-08 | **v1.4.0（二）：新增富文本输入（公式 / 特殊符号 / 代码）** | 新增 `lib/richinput.js`（分词 + LaTeX→Unicode，纯函数、离线可测）、`lib/rich-insert.js`（编排：点学习通自带按钮 → 弹窗输入 → 确认，失败即回退并记账）、`lib/uia-tool.js` + `lib/uia-tool-win.ps1`（通用 UIA：按名字找元素 / 枚举元素）、`tools/probe-uia.js`（校准工具）、`tools/rich-target-win.ps1`（模拟答题框的目标窗口）。答案里用 `$…$` 标公式、``` 标代码块；默认 `unicode` 档只改被标记的内容，`editor` 档才去点学习通自己的按钮。界面新增「插入公式 / 插入代码 / 看实际输入」与一行"其实会打进去的字"预览，设置页新增「公式与代码输入」分组（含可编辑的按钮名）|
+| 2026-10-08 | v1.4.0：三条不许被"简化"掉的产品红线 | ① 默认档位是 `unicode` 而非 `editor`；② 任何一步失败都回退成纯文本并如实记账（一份答案里 1 个公式点不到，不该毁掉整份答案）；③ 绝不转换**未标记**的内容（`a^2` 不许变成 `a²`、`1/2` 不许变成 `½`）|
+| 2026-10-08 | v1.4.0：修掉 9 个新踩的坑 | 见 §6.7。其中最有价值的一条：**`ShowDialog()` 的窗口能被手打输入、能正常绘制，但跨进程 UIA 查询恒返回 0 个后代且不抛异常** —— 用受控实验（只切换 `Show()`/`ShowDialog()`、其余不动）确认为因果，`scanned=5` → `scanned=0` |
+| 2026-10-08 | v1.4.0：尝试用真实学习通校准按钮名，结论是"客户端这条路不通" | 实测学习通桌面客户端窗口只暴露 3 个名为 `Chrome Legacy Window` 的空 Pane；同一台机器上的 Edge 窗口暴露 681 个控件、130 个有名字（连页面上的 `Copy code to clipboard` 都在）。所以 `editor` 档**只对浏览器里的学习通可行**，默认档位保持 `unicode`；校准办法（`node tools/probe-uia.js --list` → `--hwnd`）已写进 §3 与设置页提示 |
+| 2026-10-08 | v1.4.0：**源码已推送 GitHub（未重打安装包）** | 本轮只推代码与标签，不产出 Setup/Portable（用户要求是"更新到 GitHub"）。但为了验证"打包后 `uia-tool-win.ps1` 能被 spawn"这件只在打包版才炸的事，额外做了一次 `--dir` 构建（`dist-installer-v9`），并核对解包文件齐全、对打包版 exe 跑通 SP_SELFTEST 74/0 与 SP_RICHTEST 8/0。需要安装包时说一声即可按 §3 的流程重打 |
 | 2026-09-26 | 推送 v1.3.0 到 GitHub —— **已完成** | 前一天失败是三层原因叠加，逐个解决：① **TLS**：`schannel` 报 `CRYPT_E_NO_REVOCATION_CHECK`（代理做中间人，吊销列表取不到）。`http.schannelCheckRevoke=false` **无效**，换 `http.sslBackend=openssl` 报 `unable to get local issuer certificate`；**真正管用的是 `GIT_SSL_NO_VERIFY=true`**。② **凭据**：报 `could not read Username … terminal prompts disabled`，但 `git credential fill` 明明能取到用户名与口令 —— 问题出在默认的 `credential.helper=helper-selector` 在 push 时不返回凭据，**加上 `-c credential.helper=manager` 就通了**。③ **邮箱隐私**：远端拒绝 `GH007: Your push would publish a private email address`（`3504821363@qq.com` 被账号设为私密；之前的提交是在该设置生效前推上去的）。解法是不动用户的隐私设置，改用 GitHub 的 noreply 地址：把**本仓库**（不动全局）的 `user.email` 设为 `66010812+1494948@users.noreply.github.com`（`id+login` 形式，由 `api.github.com/users/1494948` 取到），用 `git rebase origin/main --exec "git commit --amend --no-edit --reset-author"` 重写这 2 个尚未推送的提交，重建标签后推送。远端核对：`refs/heads/main` 与 `refs/tags/v1.3.0` 的哈希与本地一致 |
 | 2026-09-26 | 创建 GitHub Release v1.3.0 并上传附件 | 本机没装 `gh`，改用凭据管理器里的凭据直调 API：`git credential fill` 取出凭据写入 `curl --config` 的头部文件（**全程不打印任何密钥值**），再调 `api.github.com` 建 Release（id `397017263`）与 `uploads.github.com` 传附件。发布正文从 `releases/StudyAnswerHelper/v1.3.0/发布说明-复制到GitHub.txt` 里两条分隔线之间提取，不用手抄 |
 | 2026-09-24 | 推送 v1.2.0 到 GitHub | `ls-remote` 探明远端 main 停在 `89bedf1` == 本地 HEAD，可快进，未强推。提交 `9c83bfd`（29 文件 / +2977 / −245），推送 `main`（`89bedf1..9c83bfd`）+ 注解标签 `v1.2.0`，无认证弹窗。推后核验：远端 `refs/heads/main` == `refs/tags/v1.2.0^{}` == 本地 HEAD == `9c83bfd`。仓库 47 个跟踪文件 / `.git` 2.9 MB（exe 未进仓库，走 Releases 附件）|

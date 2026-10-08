@@ -84,6 +84,8 @@
 - **图片识别题目（v1.2.0 新增）**：`Ctrl + Alt + X` 在屏幕上框住题目照片，自动识别出题干 —— 见下节
 - **自动判学科（v1.3.0 新增）**：不只会数学。数学、语文、英语、物理、化学、生物、历史、地理、道德与法治、信息技术都能认，并按该学科的规范作答（数学给步骤、英语给译文、语文给出处、物理化学给公式与配平）—— 见下节
 - **自动点选选择题（v1.3.0 新增）**：识别出是选择题并且知道正确答案是哪个字母时，直接在学习通窗口里**替你点中那个选项**（走系统无障碍接口，不靠坐标，换分辨率也不会失效）—— 见下节
+- **公式与代码输入（v1.4.0 新增）**：答案里用 `$…$` 标公式、` ``` ` 标代码块，公式会自动转成 Unicode 数学符号（`√ ≤ π a² ⁻³`）后输入；也可以开启"用学习通自带的公式/代码按钮"走它自己的排版 —— 见下节
+- **输入前先确认窗口真的到前台（v1.4.0 修复）**：修掉"还没点学习通就在后台输入、导致前面几个字丢在别的窗口里"的老问题。现在**等不到目标窗口到前台就一个字都不发**，并提示你重试 —— 见「常见问题」
 - **搜答案（v1.1.0 新增）**：贴一道题进去，三路答案来源同时开工 —— 见下节
 - **识别后自动输入（v1.2.0 新增）**：搜到高可信答案后弹 5 秒倒计时，自动切到学习通把答案打进去（秒数可调，整组可关）。**选择题会优先改为"点选选项"而不是打字**
 - **全局热键触发**：默认 `Ctrl + Alt + Enter`，在**任何**窗口下都生效，不需要先点回本程序
@@ -162,6 +164,49 @@
 > 少数以受限参数启动的 Chromium 客户端可能不暴露，此时会明确报"这个窗口没有暴露界面结构"，
 > 请改用浏览器网页版学习通，或改用「输入答案」的方式。
 
+### 公式与代码：纯文本以外的输入（v1.4.0 新增）
+
+**背景**：学习通主观题的答题框是富文本编辑器，自带「公式」和「代码」按钮。
+但桌面版一直是"模拟键盘逐字输入"，只会输普通文本 —— 于是 `a^2` 到屏幕上就是 `a^2`
+而不是 a²，分数、根号、积分这类二维排版更不可能出现。
+
+**怎么用**：在答案里用两个标记，程序会把它们与普通文本分开处理：
+
+| 你写 | 它是什么 | 会怎么输入 |
+|---|---|---|
+| `$\frac{-b\pm\sqrt{b^2-4ac}}{2a}$` | 数学公式 | 转成 Unicode 数学符号 `(-b ± √(b²-4ac))/(2a)` |
+| ` ``` ` 包住的一段 | 代码块 | 保留行结构与缩进，按纯文本输入 |
+| 其余一切 | 普通文本 | **一个字都不改** |
+
+大框下方会实时显示**"最终会逐字打进去的字"**（点「看实际输入」展开），
+所以公式被转成什么样，你在按热键之前就能核对。
+
+工具栏上的「插入公式」「插入代码」两个按钮，会把你选中的内容自动包上标记。
+
+**两档转换方式（设置 → 公式与代码输入）**：
+
+- **公式转 Unicode**（默认）：转成 `√ ≤ π a² ⁻³` 这类数学符号后当普通文本输入。
+  不碰学习通界面，兼容性最好，离线可验证。上下标、希腊字母、运算符、根号、分数
+  （写成 `a/b`）都能正确落字；但分数、积分这类二维排版只能写成单行形式。
+- **用学习通自带的按钮**：额外去点学习通编辑器工具栏上的「公式」「代码」按钮，
+  把内容填进它的弹窗再点确认，走它自己的原生排版能力。点不到就**自动退回** Unicode 输入，
+  并在提示与日志里如实说明这一段落到了哪条路径上。
+
+> **必须知情的边界**：第二档依赖那个窗口把按钮暴露给无障碍接口。
+> 实测**浏览器里的学习通可以**（同一个 Edge 窗口能读到 681 个控件、130 个有名字），
+> 而**学习通桌面客户端不行**（只能读到 3 个空面板）。所以如果你用的是客户端，
+> 就让它留在默认档位即可。
+>
+> 要用第二档，需要先校准按钮名（不同版本的叫法不一样）：
+> ```bash
+> node tools/probe-uia.js --list        # 找到学习通窗口
+> node tools/probe-uia.js --match 学习通  # 导出它的元素清单
+> ```
+> 把清单里「疑似公式/代码相关的元素」的名字填进设置页即可。
+
+**三条不会变的规矩**：① 没被标记的内容绝不转换（`a^2` 不会偷偷变成 `a²`，`1/2` 不会变成 `½`）；
+② 任何一步失败都退回纯文本，绝不假报成功；③ 一份答案里某个公式点不到，不会毁掉整份答案。
+
 ### 搜答案：题目进去，答案出来
 
 学习通上常常只有题目、没有答案。这个功能就是补上这一步：**把题目贴进来，它去帮你找答案，找到就一键填进大框。**
@@ -201,6 +246,10 @@ AI 的可以「答案+解析」一起填。然后回到学习通，按 `Ctrl + A
 |---|---|
 | `StudyAnswerHelper-Setup-1.3.0.exe` | **安装版（推荐）**。双击安装，会建桌面和开始菜单快捷方式，卸载时保留你的答案数据 |
 | `StudyAnswerHelper-Portable-1.3.0.exe` | **便携版**。免安装，双击即用，适合放在 U 盘里 |
+
+> **关于版本**：Releases 里目前挂的安装包是 **v1.3.0**。`main` 分支上的源码已经到 **v1.4.0**
+> （焦点门控修复 + 公式/代码输入），但这一版**还没有打包成 exe**。
+> 想用新功能就按「从源码运行」自己跑，或者等下一次打包。
 
 > **Windows 会弹"已保护你的电脑"（SmartScreen）**
 > 这是正常的：本程序没有购买代码签名证书（一年几百到几千元），Windows 对没有签名的程序一律拦一下。
@@ -261,6 +310,17 @@ AI 的可以「答案+解析」一起填。然后回到学习通，按 `Ctrl + A
 
 **Q：输入的内容被截断了 / 有几个字丢了？**
 把「逐字写入间隔」调大。设置为"稳妥（30ms/字）"或"很稳（60ms/字）"。默认 15ms 已经能适配绝大多数答题框，但页面越卡就越需要放慢。
+
+**Q：刚升级后，它提示"没能把学习通切到前台，已放弃输入、一个字都没打"，以前是直接输的？**
+这是 v1.4.0 **有意**改的，修的正是"**还没点学习通就在后台自动输入，导致前面的答案没输进去**"这个缺陷。
+
+老写法是"把学习通切到前台 → 固定等 420ms → 立刻逐字开打"。但 Windows 的前台切换是**异步**的，
+还可能被系统的前台锁定直接拒绝 —— 420ms 不够时，开头若干字符就落进了**当时仍持有焦点的那个窗口**里，
+学习通页面上答案的开头就这么没了。
+
+现在改成由输入引擎**等目标窗口真的成为前台窗口**再开打（实测切窗+激活在 100~600ms 之间），
+**等不到就一个字都不发**，并明确告诉你。所以看到这条提示时的正确做法是：
+**先点一下学习通的答题框、确认它在最前面，再重试**。宁可什么都不输入，也不能把答案打到别的窗口里。
 
 **Q：为什么不用剪贴板粘贴？那样快得多。**
 因为剪贴板粘贴会**覆盖你剪贴板里原有的内容**，而且有些答题框对 `paste` 事件做了拦截。逐字输入不会动剪贴板，也最接近真人操作。
@@ -541,6 +601,23 @@ SP_CLICKTEST     6 项通过 / 0 项失败：
 > 另一条"按序号兜底"的路径需要真正的 `RadioButton` 类型控件才会触发，本机 WinForms 窗口的
 > 单选按钮被系统桥接成 `Pane`，所以那条路径**在本机未被覆盖** —— 它的设计是"数量不符就拒绝"。
 
+v1.4.0 起又多了两个模式：
+
+```bash
+set SP_FOCUSTEST=1 && npm start   # 焦点门控：对照组必须复现"开头丢字"，修复组必须一个字不丢
+set SP_RICHTEST=1 && npm start    # 富输入：对着模拟答题框真点「公式/代码/确定」按钮
+```
+
+`SP_FOCUSTEST` 用两个真实窗口 + 真实 SendInput 把三种情形钉死：对照组复现缺陷（目标窗口
+拿到 0/37 字、诱饵窗口截获 37 字）、修复组一个不丢（目标 37 字、诱饵 0 字）、
+句柄无效时一个字都不打；另外还验证"打字途中被抢焦点要在第 n 个字停手、剩下的字符一个都不许漏到别的窗口"。
+
+`SP_RICHTEST` 验证的是富输入的**机制**：按名字找到「公式」按钮 → 点它 → 内容打进它打开的
+输入框 → 点「确定」→ 落进答题框；代码块同理；顺序必须保持"前缀 → 公式 → 中缀 → 代码 → 后缀"
+一个不丢；把按钮名改成一个不存在的名字时，必须**回退成纯文本**且不伪装成公式插入；
+目标句柄无效时如实失败。
+同样地，它**不验证真实学习通页面** —— 真实按钮叫什么名字要靠 `tools/probe-uia.js` 校准。
+
 ```bash
 # Windows / PowerShell
 $env:ELECTRON_RUN_AS_NODE = $null      # 必须清掉，否则 electron 会以纯 Node 模式启动
@@ -696,6 +773,51 @@ and says why.
 > in which case the tool says exactly that and you should use the browser version of Xuexitong
 > or keep using the "type the answer" mode.
 
+### Formulas and code: input beyond plain text (new in v1.4.0)
+
+**Why**: the subjective-answer box in Xuexitong is a rich-text editor with its own "formula" and
+"code" buttons. But the desktop app types character by character, so `a^2` arrives on screen as
+`a^2` rather than a², and two-dimensional layouts (fractions, integrals) were impossible.
+
+**How to use it**: mark the two special kinds of content, and the app handles them separately:
+
+| You write | It is | How it is typed |
+|---|---|---|
+| `$\frac{-b\pm\sqrt{b^2-4ac}}{2a}$` | a math formula | converted to Unicode math `(-b ± √(b²-4ac))/(2a)` |
+| a block wrapped in ` ``` ` | code | line structure and indentation preserved, typed as text |
+| everything else | plain text | **not touched at all** |
+
+A live line under the editor shows **exactly which characters will be typed** (expand it with
+"show what gets typed"), so you can verify the conversion before pressing the hotkey.
+
+The "insert formula" / "insert code" toolbar buttons wrap the current selection with the markers.
+
+**Two conversion modes** (Settings → Formulas and code):
+
+- **Convert to Unicode** (default): renders the formula as `√ ≤ π a² ⁻³` and types it as plain text.
+  Nothing about the Xuexitong UI is touched, it works everywhere, and it is verifiable offline.
+- **Use Xuexitong's own buttons**: additionally clicks the editor's own "formula"/"code" toolbar
+  buttons and fills in the dialog that opens, so the platform's native rendering is used. If a
+  button cannot be found, the segment **falls back** to Unicode input and says so in the log and in
+  the on-screen message — it never pretends to have succeeded.
+
+> **Boundary worth knowing**: the second mode needs that window to expose its buttons through the
+> accessibility API. Measured: **Xuexitong in a browser works** (one Edge window exposed 681 controls,
+> 130 with names) while the **Xuexitong desktop client does not** (it exposed 3 empty panes).
+> If you use the client, just leave the default mode.
+>
+> To use the second mode you must calibrate the button names first (they differ between versions):
+> ```bash
+> node tools/probe-uia.js --list         # find the Xuexitong window
+> node tools/probe-uia.js --match 学习通   # dump its accessible elements
+> ```
+> Paste the names from the "likely formula/code elements" section into the settings page.
+
+**Three rules that will not change**: (1) content you did not mark is never converted —
+`a^2` is never silently turned into `a²`, `1/2` is never turned into `½`;
+(2) any failed step falls back to plain text and is reported honestly;
+(3) one formula that cannot be clicked never ruins the rest of the answer.
+
 ### Answer search: question in, answer out
 
 Xuexitong assignments frequently contain questions but no answers. This closes that gap: **paste the question, it goes and finds the answer, and one click puts it in the big box.**
@@ -732,6 +854,11 @@ Grab one of the two files from this repository's [Releases](../../releases) page
 |---|---|
 | `StudyAnswerHelper-Setup-1.3.0.exe` | **Installer (recommended).** Creates desktop and Start Menu shortcuts. Your answer data is kept when you uninstall. |
 | `StudyAnswerHelper-Portable-1.3.0.exe` | **Portable.** No installation, run it straight from a USB stick. |
+
+> **About versions**: the installers attached to Releases are still **v1.3.0**. The `main` branch is
+> already at **v1.4.0** (the focus-gating fix plus formula/code input), but that version has
+> **not been packaged into an exe yet**. To use the new features, run it from source (see below),
+> or wait for the next packaging.
 
 > **Windows SmartScreen will warn you.** This is expected: the app is not code-signed (a certificate costs hundreds to thousands per year), and Windows blocks unsigned binaries by default. Click "More info" → "Run anyway". The full source is in this repository — audit it, or build it yourself.
 

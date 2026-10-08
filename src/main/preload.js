@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('sp', {
   setSettings: (patch) => invoke('app:setSettings', patch),
   setDraft: (text) => invoke('app:setDraft', text),
   cleanText: (text) => invoke('app:cleanText', text),
+  /* 富输入预览：把 $公式$ / ```代码``` 转成"实际会逐字输入的文本"显示给用户看。
+     转换逻辑只在主进程实现一份，渲染层不重复实现，避免预览与实际行为不一致。 */
+  richPreview: (text) => invoke('rich:preview', text),
   probe: () => invoke('app:probe'),
   clipboardRead: () => invoke('app:clipboardRead'),
   openDataDir: () => invoke('app:openDataDir'),

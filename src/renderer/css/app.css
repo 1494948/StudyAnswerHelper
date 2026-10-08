@@ -142,6 +142,21 @@ kbd {
 .field select { font-size: 12px; }
 #queueHint { color: var(--accent); }
 
+/* v1.4.0 富文本输入：公式/代码标记与"实际会输入什么"的预览 */
+.richbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.richbar .chip { font-size: 11px; font-weight: 600; }
+.richbar .chip.off { color: var(--ink-2); background: transparent; border-color: var(--line); }
+.richbar .chip.editor { background: var(--warn, #b26a00); color: #fff; }
+.rich-preview {
+  margin-top: 6px; padding: 8px 10px;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  color: var(--ink); background: var(--panel-2);
+  border: 1px dashed var(--line); border-radius: 8px;
+  max-height: 132px; overflow: auto;
+}
+.rich-preview.empty { color: var(--ink-2); font-style: italic; }
+
 .actions { display: flex; gap: 10px; }
 .primary {
   flex: 1 1 auto; min-height: 52px;
@@ -474,6 +489,8 @@ code {
 .autoin-title { display: flex; flex-direction: column; line-height: 1.4; min-width: 0; }
 .autoin-title strong { font-size: 13.5px; }
 .autoin-from { font-size: 11.5px; color: var(--ink-2); }
+/* v1.4.0：焦点门控的说明 —— 用户最常踩的坑是"还没点学习通答题框就等着它自动输入" */
+.autoin-tip { font-size: 11px; color: var(--warn-ink, var(--ink-2)); }
 .autoin-preview {
   font-size: 12.5px; color: var(--ink);
   background: var(--panel-2); border: 1px dashed var(--line); border-radius: 8px;

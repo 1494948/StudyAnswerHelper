@@ -187,18 +187,41 @@ function postCtrlA() {
   fire2(VK_CONTROL, 0x1D, 0, VK_A, 0x1E, 0);
   fire2(VK_A, 0x1E, KEYEVENTF_KEYUP, VK_CONTROL, 0x1D, KEYEVENTF_KEYUP);
 }
+/* 当前前台窗口的顶层句柄（与 poll() 同一种取法：先 GA_ROOT，避免命中输入法候选框） */
+function foregroundRoot() {
+  try { return toNum(rootWindow(toNum(api.GetForegroundWindow()))); } catch (_) { return 0; }
+}
+
+/* 等目标窗口真正成为前台窗口，返回等待毫秒数；超时返回 -1。
+   ★ 为什么必须"等"，而不是"切完睡一个固定时长"：
+   SetForegroundWindow 只是把切换动作派发出去，生效是异步的；从后台进程抢前台
+   还可能被 Windows 的前台锁定直接拒绝。用户手动切窗同样要几百毫秒。
+   不等就开打的直接后果 —— 开头若干个字符落进仍然持有焦点的那个窗口里，
+   学习通页面上答案的开头就这么没了（v1.3.0 及以前的实际表现）。 */
+function waitForeground(hwnd, ms) {
+  const t0 = Date.now();
+  const budget = Math.max(0, parseInt(ms, 10) || 0);
+  for (;;) {
+    if (foregroundRoot() === hwnd) return Date.now() - t0;
+    if (Date.now() - t0 >= budget) return -1;
+    sleep(Math.min(30, Math.max(5, budget)));
+  }
+}
+
 /* 把目标窗口切到前台。
    直接调 SetForegroundWindow 经常失败：Windows 只允许"当前拥有前台焦点"的进程改前台，
    从托盘/后台唤起时会返回 false。通用解法是把自己的线程临时挂到前台窗口的线程上，
-   借用它的前台权限，切完再摘掉。 */
+   借用它的前台权限，切完再摘掉。
+   ★ 返回值的语义是"目标窗口确实已经是前台窗口"，而不是"SetForegroundWindow 返回了 true"：
+   后者常常在窗口还没真正激活时就返回真，调用方据此就开打，等于没有校验。 */
 function switchToWindow(hwnd) {
   if (!hwnd) return false;
   try {
     if (!api.IsWindow(hwnd)) return false;
     if (api.IsIconic(hwnd)) api.ShowWindow(hwnd, 9 /* SW_RESTORE */);
-    if (api.SetForegroundWindow(hwnd)) return true;
+    if (api.SetForegroundWindow(hwnd) && waitForeground(hwnd, 400) >= 0) return true;
 
-    const fgWnd = toNum(api.GetForegroundWindow());
+    const fgWnd = foregroundRoot();
     const tidBuf = Buffer.alloc(4);
     const tidFg = fgWnd ? api.GetWindowThreadProcessId(fgWnd, tidBuf) : 0;
     const tidSelf = toNum(api.GetCurrentThreadId());
@@ -208,10 +231,11 @@ function switchToWindow(hwnd) {
     }
     try {
       api.BringWindowToTop(hwnd);
-      return !!api.SetForegroundWindow(hwnd);
+      api.SetForegroundWindow(hwnd);
     } finally {
       if (attached) api.AttachThreadInput(tidFg, tidSelf, 0);
     }
+    return waitForeground(hwnd, 700) >= 0;
   } catch (_) {
     return false;
   }
@@ -225,13 +249,47 @@ function escPressedNow() {
   }
 }
 
-/* 逐字输入主逻辑（阻塞式，在子进程里跑没关系） */
+/* 逐字输入主逻辑（阻塞式，在子进程里跑没关系）
+ *
+ * ★ 焦点门控（v1.4.0）：requireForeground + expectHwnd 打开后，
+ *   目标窗口没拿到前台就**一个字都不发**，而不是"先切窗、睡固定时长、再开打"。
+ *   这是用户报的那个缺陷的根因所在：
+ *   "还没点击学习通页面就在后台自动输入，导致前面的答案没有输入进去"。
+ *   宁可什么都不输入（并如实报错让用户重试），也不能把答案打到别的窗口里。 */
 function typeText(text, opts) {
   const o = opts || {};
   const delay = Math.max(0, parseInt(o.delayMs, 10) || 0);
   const t0 = Date.now();
-  const escAtStart = escPressedNow();
+  const chars = [...String(text)];
+  const total = chars.length;
   let sent = 0;
+  let focusWaitMs = -1;
+  const fgAtStart = foregroundRoot();
+  const expect = toNum(o.expectHwnd);
+  const gate = !!(o.requireForeground && expect);
+
+  if (gate) {
+    if (fgAtStart !== expect) {
+      const budget = Math.max(0, parseInt(o.focusWaitMs, 10) || 3000);
+      switchToWindow(expect);
+      focusWaitMs = waitForeground(expect, budget);
+      if (focusWaitMs < 0) {
+        return {
+          ok: false, code: 'focus-timeout', sent: 0, total: total,
+          err: '目标窗口没有获得前台焦点（等待 ' + budget + 'ms），已放弃输入以免打到别的窗口',
+          fgAtStart: fgAtStart, expectHwnd: expect, focusWaitMs: budget,
+          ms: Date.now() - t0
+        };
+      }
+    } else {
+      focusWaitMs = 0;
+    }
+    /* 窗口刚激活的瞬间，目标控件可能还在接收激活消息，先让它稳一下再敲 */
+    const settle = Math.max(0, parseInt(o.settleMs, 10) || 0);
+    if (settle) sleep(settle);
+  }
+
+  const escAtStart = escPressedNow();
 
   if (o.clearFirst) {
     postCtrlA();
@@ -240,11 +298,34 @@ function typeText(text, opts) {
     sleep(60);
   }
 
-  for (const ch of String(text)) {
+  /* 打字途中前台窗口被抢走 → 停手并如实报告。
+     ★ 关键：失焦期间**一个字都不发**，而不是"先发着、超时才停"。
+     早期实现是"失焦累计超过 250ms 才判定"，实测那 250ms 里照样把后面的字符
+     打进了被抢过去的窗口（延迟 150ms 时漏了 2 个字，实测 targetGot=ABCDEF / decoyGot=GH）。
+     现在改成：一发现失焦就原地等（不发字符），焦点在 250ms 内回来就继续、一个字不丢；
+     超过 250ms 才判定为真的被抢走并停手。这样既不误停，也不会漏字符到别的窗口。 */
+  const focusLostToleranceMs = Math.max(0, parseInt(o.focusLostToleranceMs, 10) || 250);
+
+  for (const ch of chars) {
     if (o.watchEsc !== false) {
       const down = escPressedNow();
       if (down && !escAtStart) {
-        return { ok: false, aborted: true, sent, total: [...String(text)].length, ms: Date.now() - t0 };
+        return { ok: false, aborted: true, sent, total, ms: Date.now() - t0, focusWaitMs };
+      }
+    }
+    if (gate && o.abortIfFocusLost && foregroundRoot() !== expect) {
+      const holdFrom = Date.now();
+      let back = false;
+      while (Date.now() - holdFrom < focusLostToleranceMs) {
+        sleep(25);
+        if (foregroundRoot() === expect) { back = true; break; }
+      }
+      if (!back) {
+        return {
+          ok: false, code: 'focus-lost', sent, total,
+          err: '输入到第 ' + sent + ' 个字时前台焦点离开了目标窗口，已停止（后面的内容没有输入）',
+          expectHwnd: expect, ms: Date.now() - t0, focusWaitMs
+        };
       }
     }
     let ok = false;
@@ -260,12 +341,12 @@ function typeText(text, opts) {
       ok = postUnicode(code);
     }
     if (!ok) {
-      return { ok: false, err: 'SendInput 被系统拒绝（返回值 0）', sent, ms: Date.now() - t0 };
+      return { ok: false, err: 'SendInput 被系统拒绝（返回值 0）', sent, total, ms: Date.now() - t0, focusWaitMs };
     }
     sent++;
     if (delay) sleep(delay);
   }
-  return { ok: true, sent, total: [...String(text)].length, ms: Date.now() - t0 };
+  return { ok: true, sent, total, ms: Date.now() - t0, focusWaitMs };
 }
 
 /* koffi 返回的指针是 BigInt，统一转成普通数字，避免泄漏到 IPC 与持久化里 */
@@ -331,7 +412,13 @@ function handleType(msg) {
   const res = typeText(msg.text || '', {
     delayMs: msg.delayMs,
     clearFirst: !!msg.clearFirst,
-    watchEsc: msg.watchEsc !== false
+    watchEsc: msg.watchEsc !== false,
+    /* 焦点门控（v1.4.0）：主进程决定要不要开，引擎负责"没拿到前台就一个字不发" */
+    requireForeground: !!msg.requireForeground,
+    expectHwnd: msg.expectHwnd,
+    focusWaitMs: msg.focusWaitMs,
+    settleMs: msg.settleMs,
+    abortIfFocusLost: !!msg.abortIfFocusLost
   });
   send(Object.assign({ type: 'typed', id: msg.id, hwndTarget: lastMatchedHwnd }, res));
 }

@@ -52,6 +52,7 @@
             <div class="autoin-title">
               <strong>秒后自动切到学习通输入答案</strong>
               <span class="autoin-from" id="autoInputFrom"></span>
+              <span class="autoin-tip">请先点一下学习通的答题框并保持它在最前；窗口没切过去时程序一个字都不会输入，会提示你重试</span>
             </div>
           </div>
           <div class="autoin-preview" id="autoInputPreview"></div>
@@ -72,6 +73,18 @@
         <button class="mini" id="pasteBtn">读剪贴板</button>
         <button class="mini" id="clearBtn">清空</button>
       </div>
+
+      <!-- 富文本输入（v1.4.0）：$公式$ 与 ```代码``` 会被识别；这里显示"实际会逐字打进去的字" -->
+      <div class="richbar" id="richBar">
+        <span class="muted">富输入</span>
+        <span class="chip" id="richModeTag">公式转 Unicode</span>
+        <span class="muted" id="richSummary"></span>
+        <span class="spacer"></span>
+        <button class="mini" id="richFormulaBtn" title="把选中的内容用 $...$ 包起来，当作数学公式">插入公式</button>
+        <button class="mini" id="richCodeBtn" title="把选中的内容用 ``` 包起来，当作代码块">插入代码</button>
+        <button class="mini" id="richToggleBtn" title="看看最终会逐字输入什么（公式已转成的样子）">看实际输入</button>
+      </div>
+      <div class="rich-preview" id="richPreview" hidden></div>
 
       <div class="actions">
         <button class="primary" id="insertBtn">
@@ -216,6 +229,39 @@
               <span>完成时提示音</span>
               <span class="switch small"><input type="checkbox" id="beepChk"><span class="track"><span class="knob"></span></span></span>
             </label>
+          </div>
+
+          <div class="setgroup">
+            <div class="setgroup-title">公式与代码输入（富文本）</div>
+            <label class="row"><span>转换方式</span><select id="richInputSel"></select></label>
+            <label class="row"><span>代码块怎么落地</span><select id="richCodeFallbackSel"></select></label>
+            <label class="col"><span class="muted">公式按钮名（逗号分隔，用于"点学习通自己的公式按钮"）</span>
+              <input type="text" id="richFormulaBtnInp" spellcheck="false" placeholder="公式,插入公式,公式编辑器,数学公式"></label>
+            <label class="col"><span class="muted">代码按钮名（逗号分隔）</span>
+              <input type="text" id="richCodeBtnInp" spellcheck="false" placeholder="代码,插入代码,代码块,源代码"></label>
+            <label class="col"><span class="muted">确认按钮名（逗号分隔）</span>
+              <input type="text" id="richConfirmBtnInp" spellcheck="false" placeholder="确定,确认,插入,完成"></label>
+            <label class="row"><span>点按钮后等弹窗</span><select id="richGapSel"></select></label>
+            <div class="hint">
+              在答案里用 <b>$…$</b> 标出数学公式（<b>$\frac{-b\pm\sqrt{b^2-4ac}}{2a}$</b>）、
+              用 <b>```</b> 三引号标出代码块，程序会把它们与普通文本分开处理。
+              <b>没标记的内容一个字都不会改</b> —— 绝不会把 a^2 偷偷变成 a²。
+            </div>
+            <div class="hint">
+              <b>公式转 Unicode</b>：把 LaTeX 转成数学符号（√ ≤ π a² ⁻³ …）后按普通文本逐字输入，
+              不碰学习通界面，兼容性最好。但分数、积分这类二维排版只能写成 <b>(-b±√(b²-4ac))/(2a)</b> 的形式。
+            </div>
+            <div class="hint">
+              <b>用学习通自带的按钮</b>：额外去点学习通编辑器工具栏上的「公式」「代码」按钮，
+              在其弹窗里填内容，走它的原生排版。它依赖那个窗口把按钮暴露给无障碍接口 ——
+              <b>浏览器里的学习通可以，学习通桌面客户端不行</b>（实测客户端只暴露 1 个空面板）。
+              点不到时会自动退回 Unicode 输入，并在提示与日志里如实说明。
+            </div>
+            <div class="hint">
+              按钮名因学习通版本而异。要校准，请把学习通答题页切到前台，
+              在本项目目录运行 <b>node tools/probe-uia.js --list</b> 找到窗口，再用
+              <b>--hwnd &lt;句柄&gt;</b> 把该窗口的元素名导出来，按结果改上面的按钮名即可。
+            </div>
           </div>
 
           <div class="setgroup">

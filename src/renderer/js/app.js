@@ -120,6 +120,70 @@
 
     fillSelect($('cleanupSel'), st.labels.cleanup, String(st.settings.cleanup));
     fillSelect($('delaySel'), st.labels.delay, String(st.settings.charDelayMs));
+    renderRich(st);
+  }
+
+  /* ---------------- 渲染：富文本输入（v1.4.0） ----------------
+   * 两件事：① 用主进程算出来的档位/摘要标一下头；② 用「实际会输入什么」的预览
+   * 让用户随时能核对——尤其是公式被转成什么样。 */
+  const RICH_MODE_LABEL = { off: '富输入已关闭', unicode: '公式转 Unicode', editor: '用学习通自带按钮' };
+
+  function applyRichPreview(r) {
+    if (!r) return;
+    const tag = $('richModeTag');
+    const label = RICH_MODE_LABEL[r.mode] || r.mode;
+    if (tag) {
+      tag.textContent = label;
+      tag.className = 'chip' + (r.mode === 'off' ? ' off' : (r.mode === 'editor' ? ' editor' : ''));
+    }
+    const parts = [];
+    if (r.summary) parts.push(r.summary);
+    if (r.mode !== 'off' && r.stepCount) parts.push('共 ' + r.stepCount + ' 段');
+    if (r.mode === 'off') parts.push('原文照输，不做任何转换');
+    $('richSummary').textContent = parts.join(' · ');
+
+    const pv = $('richPreview');
+    if (!pv) return;
+    const body = String(r.text || '');
+    const empty = !body.trim();
+    pv.textContent = empty ? '（没有内容）' : body;
+    if (r.warnings && r.warnings.length) {
+      pv.textContent += '\n\n⚠ ' + r.warnings.join('\n⚠ ');
+    }
+    pv.classList.toggle('empty', empty);
+  }
+
+  let richTimer = null;
+  function refreshRichPreview(text) {
+    if (richTimer) clearTimeout(richTimer);
+    richTimer = setTimeout(() => {
+      const p = api.richPreview(text || '');
+      if (p && p.then) p.then(applyRichPreview).catch(() => { /* 忽略 */ });
+    }, 220);
+  }
+
+  function renderRich(st) {
+    const r = st.rich || {};
+    /* 先按状态里的档位把标签画上（预览正文由 refreshRichPreview 补，避免每次状态推送都算一遍） */
+    applyRichPreview(Object.assign({}, r.preview || {}, { mode: r.mode }));
+  }
+
+  /* 用 $…$ / ``` 把选中内容包起来；没有选中就插入一个空模板，光标落在里面 */
+  function wrapSelection(box, before, after, placeholder) {
+    const s = box.selectionStart;
+    const e = box.selectionEnd;
+    const val = box.value;
+    const sel = val.slice(s, e);
+    const inner = sel || placeholder;
+    box.value = val.slice(0, s) + before + inner + after + val.slice(e);
+    const caret = s + before.length;
+    box.selectionStart = caret;
+    box.selectionEnd = caret + inner.length;
+    box.dataset.dirty = '1';
+    $('charCount').textContent = box.value.length + ' 字';
+    api.setDraft(box.value);
+    refreshRichPreview(box.value);
+    box.focus();
   }
 
   function fillSelect(sel, map, value) {
@@ -494,6 +558,11 @@
     fillSelect($('ocrUpscaleSel'), st.labels.upscale, String(s.ocrUpscale));
     fillSelect($('ocrTimeoutSel'), { 60000: '60 秒', 90000: '90 秒', 120000: '120 秒' }, String(s.ocrTimeoutMs));
     fillSelect($('autoInputDelaySel'), st.labels.autoInputDelay, String(s.autoInputDelaySec));
+    /* v1.4.0：富文本输入（公式 / 符号 / 代码） */
+    fillSelect($('richInputSel'), st.labels.richInput, String(s.richInput || 'unicode'));
+    fillSelect($('richCodeFallbackSel'), st.labels.richCodeFallback, String(s.richCodeFallback || 'plain'));
+    fillSelect($('richGapSel'), { 400: '0.4 秒', 700: '0.7 秒（默认）', 1000: '1 秒', 1500: '1.5 秒' },
+      String(s.richEditorClickGapMs || 700));
 
     $('clearFirstChk').checked = !!s.clearFirst;
     $('refocusChk').checked = !!s.refocus;
@@ -513,6 +582,10 @@
 
     syncTextInput($('matchTitlesInp'), (s.matchTitles || []).join('，'), normList);
     syncTextInput($('matchProcsInp'), (s.matchProcs || []).join('，'), normList);
+    /* v1.4.0：公式/代码按钮名（用于"点学习通自带的按钮"） */
+    syncTextInput($('richFormulaBtnInp'), s.richFormulaButtons || '');
+    syncTextInput($('richCodeBtnInp'), s.richCodeButtons || '');
+    syncTextInput($('richConfirmBtnInp'), s.richConfirmButtons || '');
     syncTextInput($('aiBaseUrlInp'), s.aiBaseUrl || '');
     syncTextInput($('aiModelInp'), s.aiModel || '');
     $('aiKeyState').textContent = s.aiKeySet
@@ -668,6 +741,24 @@
       box.dataset.dirty = '1';          /* 落盘确认之前，不允许被远端状态覆盖 */
       $('charCount').textContent = box.value.length + ' 字';
       pushDraft();
+      refreshRichPreview(box.value);
+    });
+
+    /* 富文本输入（v1.4.0）：把选中内容标成公式 / 代码块，再看实际会输入什么 */
+    $('richFormulaBtn').addEventListener('click', () => {
+      wrapSelection(box, '$', '$', 'a^2+b^2');
+      showToast('已标为公式：$…$ 之间的内容会按 LaTeX 转成数学符号', 'ok');
+    });
+    $('richCodeBtn').addEventListener('click', () => {
+      const s = box.selectionStart;
+      const needNl = s > 0 && box.value[s - 1] !== '\n';
+      wrapSelection(box, (needNl ? '\n' : '') + '```\n', '\n```\n', 'print("hello")');
+      showToast('已标为代码块：转换后按纯文本输入，行结构与缩进都会保留', 'ok');
+    });
+    $('richToggleBtn').addEventListener('click', () => {
+      const pv = $('richPreview');
+      pv.hidden = !pv.hidden;
+      if (!pv.hidden) refreshRichPreview(box.value);
     });
 
     $('cleanBtn').addEventListener('click', async () => {
@@ -944,6 +1035,22 @@
     $('ocrUpscaleSel').addEventListener('change', (e) => setS({ ocrUpscale: parseInt(e.target.value, 10) }));
     $('ocrTimeoutSel').addEventListener('change', (e) => setS({ ocrTimeoutMs: parseInt(e.target.value, 10) }));
     $('autoInputDelaySel').addEventListener('change', (e) => setS({ autoInputDelaySec: parseInt(e.target.value, 10) }));
+    /* v1.4.0：富文本输入 */
+    $('richInputSel').addEventListener('change', (e) => setS({ richInput: e.target.value }));
+    $('richCodeFallbackSel').addEventListener('change', (e) => setS({ richCodeFallback: e.target.value }));
+    $('richGapSel').addEventListener('change', (e) => setS({ richEditorClickGapMs: parseInt(e.target.value, 10) }));
+    const bindText = (id, key) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener('input', () => { el.dataset.dirty = '1'; });
+      el.addEventListener('change', () => {
+        el.dataset.dirty = '0';
+        setS({ [key]: String(el.value || '').trim() });
+      });
+    };
+    bindText('richFormulaBtnInp', 'richFormulaButtons');
+    bindText('richCodeBtnInp', 'richCodeButtons');
+    bindText('richConfirmBtnInp', 'richConfirmButtons');
 
     /* 文本类配置统一走"先打脏标记、再保存"：
        窗口没获得系统焦点时 document.activeElement 不可靠，
